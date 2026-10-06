@@ -15,12 +15,22 @@ dependencies = [
 ]
 
 [project.scripts]
-trading-agent = "cli:main"
+trading-agent = "trading_agent:main"
 trading-agent-backtest = "examples.backtest_real_data:main"
 trading-agent-portfolio = "examples.multi_symbol_portfolio:main"
 
 [tool.setuptools]
-py-modules = ["trading_agent", "market_data", "data_loader", "cli"]
+py-modules = [
+    "trading_agent",
+    "market_data",
+    "data_loader",
+    "cli",
+    "cache_store",
+    "portfolio_optimizer",
+    "reporting",
+    "parameter_search",
+    "strategy_runner",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
