@@ -2,14 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from trading_agent import (
-    Config,
-    MLTradingAgent,
-    RiskController,
-    backtest,
-    metrics,
-    walk_forward,
-)
+from trading_agent import Config, MLTradingAgent, RiskController, backtest, metrics, walk_forward
 
 
 def make_prices(n=250, drift=0.0005, vol=0.01, seed=42):
@@ -95,14 +88,7 @@ def test_walk_forward_returns_expected_structure():
     def fit_fn(train):
         return lambda x: pd.Series(0.5, index=x.index, dtype=float)
 
-    out = walk_forward(
-        prices=prices,
-        fit_fn=fit_fn,
-        cfg=cfg,
-        train_days=30,
-        test_days=10,
-        embargo=1,
-    )
+    out = walk_forward(prices=prices, fit_fn=fit_fn, cfg=cfg, train_days=30, test_days=10, embargo=1)
 
     assert "folds" in out
     assert "positive_folds" in out

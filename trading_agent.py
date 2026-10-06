@@ -10,8 +10,6 @@ from sklearn.ensemble import HistGradientBoostingRegressor
 
 @dataclass(frozen=True)
 class Config:
-    """Configuration for strategy execution and risk controls."""
-
     initial_capital: float = 100_000.0
     fee_bps_per_side: float = 5.0
     slippage_bps_per_side: float = 3.0
@@ -34,8 +32,6 @@ class Config:
 
 
 class FeatureEngineer:
-    """Construct predictive features from a price series."""
-
     @staticmethod
     def build_features(prices: pd.Series) -> pd.DataFrame:
         if not isinstance(prices, pd.Series):
@@ -65,8 +61,6 @@ class FeatureEngineer:
 
 
 class SignalModel:
-    """Gradient-boosted regressor for forecasting short-horizon directional returns."""
-
     def __init__(self, cfg: Config | None = None):
         self.cfg = cfg or Config()
         self.model = HistGradientBoostingRegressor(random_state=42, max_depth=6)
@@ -87,17 +81,11 @@ class SignalModel:
     def predict(self, prices: pd.Series) -> pd.Series:
         if not isinstance(prices, pd.Series):
             raise TypeError("prices must be a pandas Series")
-        if not hasattr(self, "model") or self.model is None:
-            raise ValueError("Model has not been initialized")
         if not hasattr(self, "features_") or not self.features_:
             raise ValueError("Model has not been fitted yet")
 
         features = FeatureEngineer.build_features(prices)
-        raw = pd.Series(
-            self.model.predict(features[self.features_]),
-            index=features.index,
-            dtype=float,
-        )
+        raw = pd.Series(self.model.predict(features[self.features_]), index=features.index, dtype=float)
         signal = raw.clip(-2.0, 2.0)
 
         sigma = signal.std(ddof=0)
@@ -108,8 +96,6 @@ class SignalModel:
 
 
 class RiskController:
-    """Apply volatility scaling, drawdown protection, turnover caps, and leverage limits."""
-
     def __init__(self, cfg: Config):
         self.cfg = cfg
 
@@ -118,12 +104,7 @@ class RiskController:
         scale = self.cfg.vol_target / vol
         return signal * scale.fillna(0.0)
 
-    def apply(
-        self,
-        signal: pd.Series,
-        prices: pd.Series,
-        equity_curve: pd.Series | None = None,
-    ) -> pd.Series:
+    def apply(self, signal: pd.Series, prices: pd.Series, equity_curve: pd.Series | None = None) -> pd.Series:
         if signal.empty:
             return signal.copy()
 
@@ -140,8 +121,7 @@ class RiskController:
             if emergency.any():
                 position = position.mask(emergency, 0.0)
 
-        position = position.replace([np.inf, -np.inf], 0.0)
-        position = position.fillna(0.0)
+        position = position.replace([np.inf, -np.inf], 0.0).fillna(0.0)
         position = position.clip(-self.cfg.max_leverage, self.cfg.max_leverage)
         return position
 
@@ -160,19 +140,11 @@ class RiskController:
         adjusted = adjusted.replace([np.inf, -np.inf], 0.0).fillna(0.0)
         return adjusted.clip(-self.cfg.max_leverage, self.cfg.max_leverage)
 
-    def enforce_limits(
-        self,
-        signal: pd.Series,
-        prices: pd.Series,
-        equity_curve: pd.Series | None = None,
-    ) -> pd.Series:
-        position = self.apply(signal, prices, equity_curve)
-        return self.cap_turnover(position)
+    def enforce_limits(self, signal: pd.Series, prices: pd.Series, equity_curve: pd.Series | None = None) -> pd.Series:
+        return self.cap_turnover(self.apply(signal, prices, equity_curve))
 
 
 class MLTradingAgent:
-    """High-level strategy wrapper combining ML signals and risk management."""
-
     def __init__(self, cfg: Config | None = None):
         self.cfg = cfg or Config()
         self.model = SignalModel(cfg=self.cfg)
@@ -189,7 +161,6 @@ class MLTradingAgent:
     def generate_signal(self, prices: pd.Series) -> pd.Series:
         if not isinstance(prices, pd.Series):
             raise TypeError("prices must be a pandas Series")
-
         if not self._trained:
             self.fit(prices)
 
@@ -199,20 +170,13 @@ class MLTradingAgent:
         return signal.fillna(0.0)
 
     def generate_position(self, prices: pd.Series, equity_curve: pd.Series | None = None) -> pd.Series:
-        signal = self.generate_signal(prices)
-        return self.risk.enforce_limits(signal, prices, equity_curve)
+        return self.risk.enforce_limits(self.generate_signal(prices), prices, equity_curve)
 
     def fit_and_generate(self, prices: pd.Series) -> pd.Series:
         return self.generate_position(prices)
 
 
-def backtest(
-    prices: pd.Series,
-    signal: pd.Series,
-    cfg: Config,
-    opens: pd.Series | None = None,
-) -> pd.DataFrame:
-    """Run a realistic backtest with transaction costs and slippage."""
+def backtest(prices: pd.Series, signal: pd.Series, cfg: Config, opens: pd.Series | None = None) -> pd.DataFrame:
     if not isinstance(prices, pd.Series):
         raise TypeError("prices must be a pandas Series")
     if not isinstance(signal, pd.Series):
@@ -223,7 +187,7 @@ def backtest(
     prices = prices.sort_index().astype(float)
     signal = signal.reindex(prices.index).fillna(0.0).astype(float)
 
-    if len(prices) == 0:
+    if prices.empty:
         return pd.DataFrame(
             {
                 "position": pd.Series(dtype=float, index=prices.index),
@@ -235,8 +199,7 @@ def backtest(
             index=prices.index,
         )
 
-    position = signal.shift(1).fillna(0.0)
-    position = position.clip(-cfg.max_leverage, cfg.max_leverage).astype(float)
+    position = signal.shift(1).fillna(0.0).clip(-cfg.max_leverage, cfg.max_leverage).astype(float)
 
     if opens is not None:
         opens = opens.reindex(prices.index).ffill().astype(float)
@@ -264,10 +227,10 @@ def backtest(
 
 
 def metrics(net: pd.Series, cfg: Config, min_obs: int | None = None) -> dict:
-    """Compute annualized return, Sharpe, and drawdown metrics."""
     r = pd.Series(net).dropna().astype(float)
     if r.empty:
         raise ValueError("need at least one observation")
+
     min_obs = cfg.min_obs if min_obs is None else min_obs
     if len(r) < min_obs:
         raise ValueError(f"need >= {min_obs} observations, got {len(r)}")
@@ -278,18 +241,14 @@ def metrics(net: pd.Series, cfg: Config, min_obs: int | None = None) -> dict:
     drawdown = equity / np.maximum.accumulate(equity) - 1.0
 
     under = (drawdown < 0).astype(int)
-    if len(under) == 0:
-        longest = 0
-    else:
-        longest = under.groupby((under != under.shift()).cumsum()).sum().max()
-        longest = int(longest if pd.notna(longest) else 0)
+    longest = 0 if under.empty else int(under.groupby((under != under.shift()).cumsum()).sum().max())
 
-    max_dd = float(drawdown.min()) if len(drawdown) else 0.0
+    max_dd = float(drawdown.min()) if not drawdown.empty else 0.0
     return {
         "sharpe": ann_ret / ann_vol if ann_vol > 0 else 0.0,
         "ann_return": ann_ret,
         "max_drawdown": max_dd,
-        "longest_dd_bars": int(longest),
+        "longest_dd_bars": longest,
         "calmar": ann_ret / abs(max_dd) if max_dd < 0 else 0.0,
         "n_obs": len(r),
     }
@@ -304,7 +263,6 @@ def walk_forward(
     embargo: int = 1,
     opens: pd.Series | None = None,
 ):
-    """Run time-series walk-forward validation."""
     prices = pd.Series(prices).sort_index().astype(float)
     if opens is not None:
         opens = pd.Series(opens).sort_index().astype(float)
@@ -313,14 +271,15 @@ def walk_forward(
     if len(prices) < span:
         raise ValueError(f"Not enough observations: need at least {span}, got {len(prices)}")
 
-    folds, oos = [], []
+    folds = []
+    oos = []
 
     for i in range(0, len(prices) - span + 1, test_days):
         window = prices.iloc[i : i + span]
         window_opens = opens.iloc[i : i + span] if opens is not None else None
 
-        signal_fn = fit_fn(window.iloc[:train_days])
-        signal = signal_fn(window)
+        signal_func = fit_fn(window.iloc[:train_days])
+        signal = signal_func(window)
         bt_result = backtest(window, signal, cfg, window_opens).iloc[train_days + embargo :]
 
         if bt_result.empty:
@@ -330,11 +289,11 @@ def walk_forward(
         folds.append({"start": bt_result.index[0], "fold_return": bt_result["net"].sum()})
 
     df = pd.DataFrame(folds)
-    stitched = pd.concat(oos) if oos else pd.Series(dtype=float)
+    stitched = pd.concat(oos, ignore_index=False) if oos else pd.Series(dtype=float)
 
     return {
         "folds": df,
-        "positive_folds": f"{(df['fold_return'] > 0).sum()}/{len(df)}",
+        "positive_folds": f"{int((df['fold_return'] > 0).sum())}/{len(df)}",
         "oos_metrics": metrics(stitched, cfg) if not stitched.empty else {
             "sharpe": 0.0,
             "ann_return": 0.0,
