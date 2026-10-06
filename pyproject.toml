@@ -1,20 +1,18 @@
-[build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
+# Local development commands
 
-[project]
-name = "trading-agent"
-version = "0.1.0"
-description = "ML-based trading agent and backtesting utilities"
-requires-python = ">=3.10"
-dependencies = [
-    "numpy",
-    "pandas",
-    "scikit-learn",
-]
+.PHONY: install test lint fmt clean
 
-[tool.setuptools]
-py-modules = ["trading_agent"]
+install:
+	python -m pip install -e .
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
+install-dev:
+	python -m pip install -e . -r requirements.txt
+
+test:
+	pytest -q
+
+lint:
+	python -m flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+
+clean:
+	find . -type __pycache__ -name "*.pyc" -delete

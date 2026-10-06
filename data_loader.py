@@ -5,20 +5,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from data_loader import load_prices
 from trading_agent import Config, MLTradingAgent
-
-
-def load_prices(csv_path: str | Path) -> pd.Series:
-    df = pd.read_csv(csv_path)
-
-    if "price" in df.columns:
-        series = df["price"].astype(float)
-    elif len(df.columns) == 1:
-        series = df.iloc[:, 0].astype(float)
-    else:
-        raise ValueError("CSV must contain a 'price' column or a single numeric price column.")
-
-    return pd.Series(series.to_numpy(), index=pd.RangeIndex(len(series)))
 
 
 def main() -> None:
@@ -35,7 +23,7 @@ def main() -> None:
             index=pd.date_range("2020-01-01", periods=200, freq="D"),
         )
     else:
-        prices = load_prices(args.csv)
+        prices = load_prices(Path(args.csv))
 
     agent = MLTradingAgent(Config())
     position = agent.generate_position(prices)
