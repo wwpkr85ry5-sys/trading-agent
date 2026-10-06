@@ -1,18 +1,29 @@
-from __future__ import annotations
+# Local development commands
 
-from pathlib import Path
+.PHONY: install install-dev test lint fmt clean help
 
-import pandas as pd
+help:
+	@echo "Available commands:"
+	@echo "  make install        - Install the package"
+	@echo "  make install-dev    - Install the package with dev dependencies"
+	@echo "  make test           - Run tests"
+	@echo "  make lint           - Run linting checks"
+	@echo "  make clean          - Clean up build artifacts"
 
+install:
+	python -m pip install -e .
 
-def load_prices(csv_path: str | Path) -> pd.Series:
-    df = pd.read_csv(csv_path)
+install-dev:
+	python -m pip install -e . -r requirements.txt
 
-    if "price" in df.columns:
-        series = df["price"].astype(float)
-    elif len(df.columns) == 1:
-        series = df.iloc[:, 0].astype(float)
-    else:
-        raise ValueError("CSV must contain a 'price' column or a single numeric price column.")
+test:
+	pytest -v
 
-    return pd.Series(series.to_numpy(), index=pd.RangeIndex(len(series)))
+lint:
+	python -m flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+
+clean:
+	find . -type d -name __pycache__ -exec rm -rf {} +
+	find . -type f -name '*.pyc' -delete
+	find . -type d -name .pytest_cache -exec rm -rf {} +
+	find . -type d -name .cache -exec rm -rf {} +
