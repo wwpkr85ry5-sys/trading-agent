@@ -1,0 +1,155 @@
+//@version=5
+strategy("Price Action Strategy", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// ============================================================================
+// PRICE ACTION STRATEGY
+// Trades based on support/resistance, breakouts, and trend confirmation
+// ============================================================================
+
+// Input Parameters
+pLookback = input(20, "Lookback Period", minval=5, maxval=50)
+pSRThreshold = input(0.5, "S/R Threshold (%)", minval=0.1, maxval=2.0)
+pCandlePattern = input(true, "Use Candle Patterns")
+pTrendConfirm = input(true, "Use Trend Confirmation")
+pVolConfirm = input(true, "Use Volume Confirmation")
+pATRPeriod = input(14, "ATR Period", minval=5, maxval=50)
+
+// ============================================================================
+// CALCULATE SUPPORT & RESISTANCE
+// ============================================================================
+
+// Pivot Points (Classic)
+pivot = (high + low + close) / 3
+resist1 = 2 * pivot - low
+support1 = 2 * pivot - high
+resist2 = pivot + (high - low)
+support2 = pivot - (high - low)
+
+// Local highs and lows
+localHigh = high > high[1] and high > high[2]
+localLow = low < low[1] and low < low[2]
+
+// Support and resistance levels
+resistanceLevel = ta.highest(high, pLookback)
+supportLevel = ta.lowest(low, pLookback)
+
+// Price proximity to S/R
+priceNearResistance = close > resistanceLevel * (1 - pSRThreshold / 100) and close < resistanceLevel * (1 + pSRThreshold / 100)
+priceNearSupport = close > supportLevel * (1 - pSRThreshold / 100) and close < supportLevel * (1 + pSRThreshold / 100)
+
+// ============================================================================
+// CANDLE PATTERNS
+// ============================================================================
+
+// Pin Bar (Long wick reversal)
+upperWick = high - math.max(close, open)
+lowerWick = math.min(close, open) - low
+bodySize = math.abs(close - open)
+
+bullishPinBar = lowerWick > bodySize * 2 and lowerWick > upperWick and close > open
+bearishPinBar = upperWick > bodySize * 2 and upperWick > lowerWick and close < open
+
+// Inside Bar (Continuation)
+insideBar = high < high[1] and low > low[1]
+
+// Engulfing (Reversal)
+bullishEngulfing = close[1] < open[1] and close > open and open < close[1] and close > open[1]
+bearishEngulfing = close[1] > open[1] and close < open and open > close[1] and close < open[1]
+
+// Hammer/Hanging Man
+hammerLike = lowerWick > bodySize * 2 and upperWick < bodySize * 0.5
+
+// ============================================================================
+// TREND CONFIRMATION
+// ============================================================================
+
+// Moving averages for trend
+ma_fast = ta.sma(close, 9)
+ma_slow = ta.sma(close, 21)
+
+uptrend = ma_fast > ma_slow
+downtrend = ma_fast < ma_slow
+
+// Volume confirmation
+avgVolume = ta.sma(volume, pLookback)
+volumeConfirm = volume > avgVolume * 1.2
+
+// ATR for volatility
+atr = ta.atr(pATRPeriod)
+
+// ============================================================================
+// GENERATE TRADING SIGNALS
+// ============================================================================
+
+// Long signals
+longPattern = (bullishPinBar or bullishEngulfing or hammerLike) and close > open
+longTrend = uptrend and ma_fast > ma_fast[1]
+longConfirm = (pVolConfirm ? volumeConfirm : true) and (pTrendConfirm ? longTrend : true)
+
+longSignal = (longPattern or priceNearSupport) and longConfirm
+
+// Short signals
+shortPattern = (bearishPinBar or bearishEngulfing) and close < open
+shortTrend = downtrend and ma_fast < ma_fast[1]
+shortConfirm = (pVolConfirm ? volumeConfirm : true) and (pTrendConfirm ? shortTrend : true)
+
+shortSignal = (shortPattern or priceNearResistance) and shortConfirm
+
+// ============================================================================
+// ENTRY AND EXIT LOGIC
+// ============================================================================
+
+// Entry
+if longSignal and not longSignal[1]
+    strategy.entry("PA_Long", strategy.long)
+
+if shortSignal and not shortSignal[1]
+    strategy.entry("PA_Short", strategy.short)
+
+// Exit: Take profit at next resistance/support or stop loss at ATR
+if strategy.position_size > 0
+    // Stop loss at recent support
+    strategy.exit("PA_Long_Exit", "PA_Long", stop=supportLevel - atr, limit=resistanceLevel + atr)
+
+if strategy.position_size < 0
+    // Stop loss at recent resistance
+    strategy.exit("PA_Short_Exit", "PA_Short", stop=resistanceLevel + atr, limit=supportLevel - atr)
+
+// ============================================================================
+// PLOTTING
+// ============================================================================
+
+// Plot moving averages
+plot(ma_fast, title="Fast MA (9)", color=color.blue, linewidth=1)
+plot(ma_slow, title="Slow MA (21)", color=color.red, linewidth=1)
+
+// Plot support and resistance
+plot(resistanceLevel, title="Resistance", color=color.red, linewidth=2, style=plot.style_line)
+plot(supportLevel, title="Support", color=color.green, linewidth=2, style=plot.style_line)
+
+// Plot pivot levels
+plot(resist1, title="Resist 1", color=color.new(color.red, 60), linewidth=1, style=plot.style_dashed)
+plot(support1, title="Support 1", color=color.new(color.green, 60), linewidth=1, style=plot.style_dashed)
+
+// Highlight patterns
+plotshape(bullishPinBar, style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, title="Bullish Pin Bar")
+plotshape(bearishPinBar, style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, title="Bearish Pin Bar")
+
+plotshape(bullishEngulfing, style=shape.circle, location=location.belowbar, color=color.lime, size=size.small, title="Bullish Engulfing")
+plotshape(bearishEngulfing, style=shape.circle, location=location.abovebar, color=color.orange, size=size.small, title="Bearish Engulfing")
+
+plotshape(insideBar, style=shape.square, location=location.abovebar, color=color.blue, size=size.tiny, title="Inside Bar")
+
+// Signal markers
+plotshape(longSignal, style=shape.triangleup, location=location.abovebar, color=color.new(color.green, 0), size=size.small, title="Long Signal")
+plotshape(shortSignal, style=shape.triangledown, location=location.belowbar, color=color.new(color.red, 0), size=size.small, title="Short Signal")
+
+// Alerts
+alertmessage_long = "Price Action: LONG signal - Pattern + Support"
+alertmessage_short = "Price Action: SHORT signal - Pattern + Resistance"
+
+if longSignal and not longSignal[1]
+    alert(alertmessage_long, alert.freq_once_per_bar)
+
+if shortSignal and not shortSignal[1]
+    alert(alertmessage_short, alert.freq_once_per_bar)
