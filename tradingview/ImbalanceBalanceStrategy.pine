@@ -1,0 +1,117 @@
+//@version=5
+strategy("Imbalance & Balance Strategy", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// ============================================================================
+// IMBALANCE & BALANCE STRATEGY
+// Detects order flow imbalances and mean reversion opportunities
+// ============================================================================
+
+// Input Parameters
+imbImbalanceThreshold = input(1.5, "Imbalance Threshold (std dev)", minval=0.5, maxval=5.0)
+imbVolumeLookback = input(20, "Volume Lookback Period", minval=5, maxval=50)
+imbMARatio = input(2.0, "Buy/Sell Ratio Threshold", minval=1.0, maxval=5.0)
+imbSmoothing = input(5, "Signal Smoothing", minval=1, maxval=20)
+
+// ============================================================================
+// CALCULATE IMBALANCE METRICS
+// ============================================================================
+
+// Detect buying vs selling pressure
+buyVolume = volume * (close > open ? 1 : 0.5)
+sellVolume = volume * (close < open ? 1 : 0.5)
+
+// Calculate volume imbalance
+volumeImbalance = buyVolume - sellVolume
+volumeImbalanceMA = ta.sma(volumeImbalance, imbVolumeLookback)
+volumeImbalanceStdDev = ta.stdev(volumeImbalance, imbVolumeLookback)
+
+// Normalize imbalance
+normalizedImbalance = (volumeImbalance - volumeImbalanceMA) / (volumeImbalanceStdDev + 0.001)
+
+// Buy/Sell ratio
+buyVolumeMA = ta.sma(buyVolume, imbVolumeLookback)
+sellVolumeMA = ta.sma(sellVolume, imbVolumeLookback)
+buysellRatio = buyVolumeMA / (sellVolumeMA + 0.001)
+
+// ============================================================================
+// CALCULATE BALANCE METRICS
+// ============================================================================
+
+// Price and volume balance
+priceBalance = (close - ta.lowest(close, imbVolumeLookback)) / (ta.highest(close, imbVolumeLookback) - ta.lowest(close, imbVolumeLookback) + 0.001)
+volumeBalance = volume / ta.sma(volume, imbVolumeLookback)
+
+// Trend balance (comparing uptrends vs downtrends)
+uptrend = close > open ? 1 : 0
+downtrend = close < open ? 1 : 0
+uptrend_ma = ta.sma(uptrend, imbVolumeLookback)
+downtrend_ma = ta.sma(downtrend, imbVolumeLookback)
+trendBalance = uptrend_ma - downtrend_ma
+
+// ============================================================================
+// GENERATE SIGNALS
+// ============================================================================
+
+// Imbalance signal
+imbLongSignal = normalizedImbalance > imbImbalanceThreshold and buysellRatio > imbMARatio
+imbShortSignal = normalizedImbalance < -imbImbalanceThreshold and buysellRatio < (1 / imbMARatio)
+
+// Balance signal (mean reversion)
+balLongSignal = priceBalance < 0.3 and volumeBalance > 1.2 and trendBalance > 0.5
+balShortSignal = priceBalance > 0.7 and volumeBalance > 1.2 and trendBalance < -0.5
+
+// Combined signal
+longSignal = (imbLongSignal or balLongSignal)
+shortSignal = (imbShortSignal or balShortSignal)
+
+// Smooth signals
+longSmoothed = ta.sma(longSignal ? 1 : 0, imbSmoothing) > 0.5
+shortSmoothed = ta.sma(shortSignal ? 1 : 0, imbSmoothing) > 0.5
+
+// ============================================================================
+// ENTRY AND EXIT LOGIC
+// ============================================================================
+
+// Entry conditions
+if longSmoothed and not longSmoothed[1]
+    strategy.entry("Imb_Long", strategy.long)
+
+if shortSmoothed and not shortSmoothed[1]
+    strategy.entry("Imb_Short", strategy.short)
+
+// Exit conditions (opposite signal or time-based)
+if not longSmoothed and strategy.position_size > 0
+    strategy.close("Imb_Long")
+
+if not shortSmoothed and strategy.position_size < 0
+    strategy.close("Imb_Short")
+
+// ============================================================================
+// PLOTTING
+// ============================================================================
+
+// Plot signals
+plot(normalizedImbalance, title="Normalized Imbalance", color=color.blue, linewidth=2)
+hline(imbImbalanceThreshold, title="Imbalance Upper Threshold", color=color.green, linestyle=hline.style_dashed)
+hline(-imbImbalanceThreshold, title="Imbalance Lower Threshold", color=color.red, linestyle=hline.style_dashed)
+hline(0, title="Zero Line", color=color.gray, linestyle=hline.style_dotted)
+
+plot(buysellRatio, title="Buy/Sell Ratio", color=color.orange, linewidth=1.5)
+hline(imbMARatio, title="Ratio Upper", color=color.green, linestyle=hline.style_dashed)
+hline(1/imbMARatio, title="Ratio Lower", color=color.red, linestyle=hline.style_dashed)
+
+plot(priceBalance, title="Price Balance (0-1)", color=color.purple, linewidth=1)
+
+// Highlight signals
+plotshape(longSmoothed, style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, title="Long Signal")
+plotshape(shortSmoothed, style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, title="Short Signal")
+
+// Alert messages
+alertmessage_long = "Imbalance: LONG signal generated"
+alertmessage_short = "Imbalance: SHORT signal generated"
+
+if longSmoothed and not longSmoothed[1]
+    alert(alertmessage_long, alert.freq_once_per_bar)
+
+if shortSmoothed and not shortSmoothed[1]
+    alert(alertmessage_short, alert.freq_once_per_bar)

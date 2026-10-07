@@ -1,0 +1,147 @@
+//@version=5
+strategy("Supply & Demand Strategy", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// ============================================================================
+// SUPPLY & DEMAND STRATEGY
+// Identifies supply and demand zones, breaks, and reversals
+// ============================================================================
+
+// Input Parameters
+supplyDemandLookback = input(20, "Lookback Period", minval=5, maxval=50)
+supplyDemandThreshold = input(0.5, "Zone Threshold (%)", minval=0.1, maxval=2.0)
+supplyDemandStrength = input(1.5, "Zone Strength (std dev)", minval=0.5, maxval=3.0)
+supplyDemandRsiPeriod = input(14, "RSI Period", minval=5, maxval=50)
+
+// ============================================================================
+// IDENTIFY SUPPLY ZONES (Resistance)
+// ============================================================================
+
+// Find local highs (supply zones)
+high_1 = high[1]
+high_2 = high[2]
+high_3 = high[3]
+
+supplyZoneHigh = ta.highest(high, supplyDemandLookback)
+supplyZoneLow = supplyZoneHigh * (1 - supplyDemandThreshold / 100)
+
+// Volume at resistance
+supplyZoneVolume = 0.0
+for i = 0 to supplyDemandLookback - 1
+    if high[i] >= supplyZoneLow and high[i] <= supplyZoneHigh
+        supplyZoneVolume += volume[i]
+
+supplyZoneVolumeAvg = supplyZoneVolume / supplyDemandLookback
+
+// ============================================================================
+// IDENTIFY DEMAND ZONES (Support)
+// ============================================================================
+
+// Find local lows (demand zones)
+low_1 = low[1]
+low_2 = low[2]
+low_3 = low[3]
+
+demandZoneLow = ta.lowest(low, supplyDemandLookback)
+demandZoneHigh = demandZoneLow * (1 + supplyDemandThreshold / 100)
+
+// Volume at support
+demandZoneVolume = 0.0
+for i = 0 to supplyDemandLookback - 1
+    if low[i] <= demandZoneHigh and low[i] >= demandZoneLow
+        demandZoneVolume += volume[i]
+
+demandZoneVolumeAvg = demandZoneVolume / supplyDemandLookback
+
+// ============================================================================
+// DETECT ZONE BREAKS AND REVERSALS
+// ============================================================================
+
+// Supply zone break (bearish breakout)
+supplyBreak = close > supplyZoneHigh and close[1] <= supplyZoneHigh and volume > ta.sma(volume, supplyDemandLookback) * 1.5
+
+// Demand zone break (bullish breakout)
+demandBreak = close < demandZoneLow and close[1] >= demandZoneLow and volume > ta.sma(volume, supplyDemandLookback) * 1.5
+
+// Supply zone bounce (bullish reversal from resistance)
+supplyBounce = close >= supplyZoneLow and close <= supplyZoneHigh and close[1] < supplyZoneLow
+
+// Demand zone bounce (bullish bounce from support)
+demandBounce = close >= demandZoneLow and close <= demandZoneHigh and close[1] < demandZoneLow
+
+// ============================================================================
+// RSI CONFIRMATION
+// ============================================================================
+
+rsi = ta.rsi(close, supplyDemandRsiPeriod)
+rsiOverbought = rsi > 70
+rsiOversold = rsi < 30
+rsiNeutral = rsi >= 40 and rsi <= 60
+
+// ============================================================================
+// GENERATE TRADING SIGNALS
+// ============================================================================
+
+// Long signals
+longSignal1 = demandBounce and rsi < 50  // Demand zone bounce
+longSignal2 = demandBreak and rsi > 50           // Break above demand zone
+longSignal = longSignal1 or longSignal2
+
+// Short signals
+shortSignal1 = supplyBounce and rsi > 50        // Supply zone bounce
+shortSignal2 = supplyBreak and rsi < 50          // Break below supply zone
+shortSignal = shortSignal1 or shortSignal2
+
+// ============================================================================
+// ENTRY AND EXIT LOGIC
+// ============================================================================
+
+if longSignal and not longSignal[1]
+    strategy.entry("SD_Long", strategy.long)
+
+if shortSignal and not shortSignal[1]
+    strategy.entry("SD_Short", strategy.short)
+
+// Exit when price moves beyond zones
+if strategy.position_size > 0 and close > supplyZoneHigh
+    strategy.close("SD_Long")
+
+if strategy.position_size < 0 and close < demandZoneLow
+    strategy.close("SD_Short")
+
+// ============================================================================
+// PLOTTING - SUPPLY & DEMAND ZONES
+// ============================================================================
+
+// Draw supply zone (resistance)
+plot(supplyZoneHigh, title="Supply Zone High", color=color.red, linewidth=2, style=plot.style_line)
+plot(supplyZoneLow, title="Supply Zone Low", color=color.red, linewidth=1, style=plot.style_dashed)
+fill(plot(supplyZoneHigh), plot(supplyZoneLow), title="Supply Zone", color=color.new(color.red, 80))
+
+// Draw demand zone (support)
+plot(demandZoneHigh, title="Demand Zone High", color=color.green, linewidth=1, style=plot.style_dashed)
+plot(demandZoneLow, title="Demand Zone Low", color=color.green, linewidth=2, style=plot.style_line)
+fill(plot(demandZoneHigh), plot(demandZoneLow), title="Demand Zone", color=color.new(color.green, 80))
+
+// Plot RSI
+plot(rsi, title="RSI", color=color.blue, linewidth=1)
+hline(70, title="RSI Overbought", color=color.red, linestyle=hline.style_dashed)
+hline(30, title="RSI Oversold", color=color.green, linestyle=hline.style_dashed)
+hline(50, title="RSI Midline", color=color.gray, linestyle=hline.style_dotted)
+
+// Plot volume at zones
+plot(supplyZoneVolumeAvg, title="Supply Zone Avg Volume", color=color.red, linewidth=1, style=plot.style_histogram)
+plot(demandZoneVolumeAvg, title="Demand Zone Avg Volume", color=color.green, linewidth=1, style=plot.style_histogram)
+
+// Plot signals
+plotshape(longSignal, style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, title="Long Signal")
+plotshape(shortSignal, style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, title="Short Signal")
+
+// Alert messages
+alertmessage_long = "S&D: LONG signal at demand zone"
+alertmessage_short = "S&D: SHORT signal at supply zone"
+
+if longSignal and not longSignal[1]
+    alert(alertmessage_long, alert.freq_once_per_bar)
+
+if shortSignal and not shortSignal[1]
+    alert(alertmessage_short, alert.freq_once_per_bar)
