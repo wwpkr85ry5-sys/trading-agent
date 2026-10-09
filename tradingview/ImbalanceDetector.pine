@@ -1,0 +1,86 @@
+//@version=5
+indicator("Imbalance Detector", overlay=true, timeframe="")
+
+// ============================================================================
+// IMBALANCE DETECTOR INDICATOR
+// Real-time order flow imbalance visualization
+// ============================================================================
+
+// Input Parameters
+lookback = input(20, "Lookback Period", minval=5, maxval=50)
+imbalanceThreshold = input(1.5, "Imbalance Threshold (std dev)", minval=0.5, maxval=5.0)
+rsiPeriod = input(14, "RSI Period", minval=5, maxval=50)
+maLength = input(9, "MA Length", minval=3, maxval=50)
+
+// ============================================================================
+// CALCULATE IMBALANCES
+// ============================================================================
+
+// Detect buying vs selling pressure
+buyVolume = volume * (close > open ? 1 : 0.5)
+sellVolume = volume * (close < open ? 1 : 0.5)
+
+// Volume imbalance
+volumeImbalance = buyVolume - sellVolume
+volumeImbalanceMA = ta.sma(volumeImbalance, lookback)
+volumeImbalanceStdDev = ta.stdev(volumeImbalance, lookback)
+normalizedImbalance = (volumeImbalance - volumeImbalanceMA) / (volumeImbalanceStdDev + 0.001)
+
+// Price action imbalance
+highLow = high - low
+closeOpen = close - open
+priceImbalance = closeOpen / (highLow + 0.001)  // Range from -1 to 1
+priceImbalanceMA = ta.sma(priceImbalance, lookback)
+
+// Momentum imbalance
+rsi = ta.rsi(close, rsiPeriod)
+momentumImbalance = (rsi - 50) / 50  // Normalized -1 to 1
+
+// ============================================================================
+// COMBINED IMBALANCE SCORE
+// ============================================================================
+
+combinedImbalance = (normalizedImbalance * 0.4 + priceImbalanceMA * 0.3 + momentumImbalance * 0.3) / 3
+combinedImbalanceSmoothed = ta.sma(combinedImbalance, maLength)
+
+// ============================================================================
+// DETECT EXTREME IMBALANCES
+// ============================================================================
+
+extremeImbalanceLong = combinedImbalance > imbalanceThreshold
+extremeImbalanceShort = combinedImbalance < -imbalanceThreshold
+modulateImbalanceLong = combinedImbalance > (imbalanceThreshold * 0.5) and combinedImbalance <= imbalanceThreshold
+modulateImbalanceShort = combinedImbalance < (-imbalanceThreshold * 0.5) and combinedImbalance >= -imbalanceThreshold
+
+// ============================================================================
+// PLOTTING
+// ============================================================================
+
+// Plot normalized imbalance
+plot(normalizedImbalance, title="Volume Imbalance", color=color.blue, linewidth=2)
+plot(priceImbalanceMA, title="Price Imbalance MA", color=color.orange, linewidth=1)
+plot(momentumImbalance, title="Momentum Imbalance", color=color.purple, linewidth=1)
+
+// Plot combined score
+plot(combinedImbalanceSmoothed, title="Combined Imbalance Score", color=color.new(color.black, 0), linewidth=2)
+
+// Plot thresholds
+hline(imbalanceThreshold, title="Upper Threshold", color=color.green, linestyle=hline.style_dashed)
+hline(-imbalanceThreshold, title="Lower Threshold", color=color.red, linestyle=hline.style_dashed)
+hline(imbalanceThreshold * 0.5, title="Moderate Upper", color=color.new(color.green, 60), linestyle=hline.style_dotted)
+hline(-imbalanceThreshold * 0.5, title="Moderate Lower", color=color.new(color.red, 60), linestyle=hline.style_dotted)
+hline(0, title="Zero Line", color=color.gray, linestyle=hline.style_dotted)
+
+// Fill zones
+fill(plot(imbalanceThreshold), plot(imbalanceThreshold * 0.5), title="Extreme Long Zone", color=color.new(color.green, 90))
+fill(plot(-imbalanceThreshold * 0.5), plot(-imbalanceThreshold), title="Extreme Short Zone", color=color.new(color.red, 90))
+
+// Plot signal markers
+plotshape(extremeImbalanceLong, style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, title="Extreme Buy Imbalance")
+plotshape(extremeImbalanceShort, style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, title="Extreme Sell Imbalance")
+plotshape(modulateImbalanceLong, style=shape.circle, location=location.belowbar, color=color.new(color.green, 30), size=size.tiny, title="Moderate Buy Imbalance")
+plotshape(modulateImbalanceShort, style=shape.circle, location=location.abovebar, color=color.new(color.red, 30), size=size.tiny, title="Moderate Sell Imbalance")
+
+// Background coloring
+backgroundColor = extremeImbalanceLong ? color.new(color.green, 90) : extremeImbalanceShort ? color.new(color.red, 90) : modulateImbalanceLong ? color.new(color.green, 95) : modulateImbalanceShort ? color.new(color.red, 95) : na
+bgcolor(backgroundColor, title="Imbalance Background")

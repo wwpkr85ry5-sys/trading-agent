@@ -1,0 +1,140 @@
+//@version=5
+indicator("Supply & Demand Zones", overlay=true, max_bars_back=500)
+
+// ============================================================================
+// SUPPLY & DEMAND ZONES INDICATOR
+// Visualizes supply/demand zones with volume confirmation
+// ============================================================================
+
+// Input Parameters
+lookback = input(20, "Lookback Period", minval=5, maxval=50)
+zoneThreshold = input(0.5, "Zone Threshold (%)", minval=0.1, maxval=2.0)
+volumeMultiplier = input(1.5, "Volume Confirmation Multiplier", minval=1.0, maxval=3.0)
+rsiPeriod = input(14, "RSI Period", minval=5, maxval=50)
+showZoneLabels = input(true, "Show Zone Labels")
+showVolumeProfile = input(true, "Show Volume Profile")
+
+// ============================================================================
+// IDENTIFY SUPPLY ZONES
+// ============================================================================
+
+// Find highest high (supply)
+supplyZoneHigh = ta.highest(high, lookback)
+supplyZoneLow = supplyZoneHigh * (1 - zoneThreshold / 100)
+
+// Calculate volume in supply zone
+supplyZoneVolume = 0.0
+for i = 0 to lookback - 1
+    if high[i] >= supplyZoneLow and high[i] <= supplyZoneHigh
+        supplyZoneVolume += volume[i]
+
+avgVolume = ta.sma(volume, lookback)
+supplyZoneVolumeConfirmed = supplyZoneVolume > (avgVolume * lookback * volumeMultiplier)
+
+// ============================================================================
+// IDENTIFY DEMAND ZONES
+// ============================================================================
+
+// Find lowest low (demand)
+demandZoneLow = ta.lowest(low, lookback)
+demandZoneHigh = demandZoneLow * (1 + zoneThreshold / 100)
+
+// Calculate volume in demand zone
+demandZoneVolume = 0.0
+for i = 0 to lookback - 1
+    if low[i] <= demandZoneHigh and low[i] >= demandZoneLow
+        demandZoneVolume += volume[i]
+
+demandZoneVolumeConfirmed = demandZoneVolume > (avgVolume * lookback * volumeMultiplier)
+
+// ============================================================================
+// DETECT ZONE TOUCHES AND BOUNCES
+// ============================================================================
+
+// Price near supply zone
+nearSupply = close >= supplyZoneLow and close <= supplyZoneHigh
+priceTouchingSupply = close > supplyZoneLow and close[1] <= supplyZoneLow
+priceRejectedSupply = close < supplyZoneHigh and close[1] > supplyZoneHigh and volume > avgVolume
+
+// Price near demand zone
+nearDemand = close >= demandZoneLow and close <= demandZoneHigh
+priceTouchingDemand = close < demandZoneHigh and close[1] >= demandZoneHigh
+priceRejectedDemand = close > demandZoneLow and close[1] < demandZoneLow and volume > avgVolume
+
+// ============================================================================
+// RSI CONFIRMATION
+// ============================================================================
+
+rsi = ta.rsi(close, rsiPeriod)
+rsiOverbought = rsi > 70
+rsiOversold = rsi < 30
+
+// ============================================================================
+// PLOTTING - SUPPLY & DEMAND ZONES
+// ============================================================================
+
+// Supply zone coloring
+if supplyZoneVolumeConfirmed
+    fill(plot(supplyZoneHigh), plot(supplyZoneLow), title="Supply Zone (Confirmed)", color=color.new(color.red, 70))
+else
+    fill(plot(supplyZoneHigh), plot(supplyZoneLow), title="Supply Zone", color=color.new(color.red, 85))
+
+// Demand zone coloring
+if demandZoneVolumeConfirmed
+    fill(plot(demandZoneHigh), plot(demandZoneLow), title="Demand Zone (Confirmed)", color=color.new(color.green, 70))
+else
+    fill(plot(demandZoneHigh), plot(demandZoneLow), title="Demand Zone", color=color.new(color.green, 85))
+
+// Zone boundaries
+plot(supplyZoneHigh, title="Supply High", color=color.red, linewidth=2, style=plot.style_line)
+plot(supplyZoneLow, title="Supply Low", color=color.red, linewidth=1, style=plot.style_dashed)
+plot(demandZoneHigh, title="Demand High", color=color.green, linewidth=1, style=plot.style_dashed)
+plot(demandZoneLow, title="Demand Low", color=color.green, linewidth=2, style=plot.style_line)
+
+// ============================================================================
+// PLOT ZONE INTERACTIONS
+// ============================================================================
+
+// Price touching supply (potential rejection)
+plotshape(priceTouchingSupply and rsiOverbought, style=shape.diamond, location=location.abovebar, color=color.red, size=size.small, title="Supply Touched (Overbought)")
+plotshape(priceRejectedSupply, style=shape.triangledown, location=location.abovebar, color=color.darkred, size=size.small, title="Supply Rejected")
+
+// Price touching demand (potential bounce)
+plotshape(priceTouchingDemand and rsiOversold, style=shape.diamond, location=location.belowbar, color=color.green, size=size.small, title="Demand Touched (Oversold)")
+plotshape(priceRejectedDemand, style=shape.triangleup, location=location.belowbar, color=color.darkgreen, size=size.small, title="Demand Rejected")
+
+// ============================================================================
+// LABELS
+// ============================================================================
+
+if showZoneLabels
+    if supplyZoneVolumeConfirmed
+        label.new(bar_index, supplyZoneHigh, "SUPPLY (Confirmed)", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small)
+    if demandZoneVolumeConfirmed
+        label.new(bar_index, demandZoneLow, "DEMAND (Confirmed)", style=label.style_label_up, color=color.green, textcolor=color.white, size=size.small)
+
+// ============================================================================
+// TABLE - ZONE STATISTICS
+// ============================================================================
+
+var table zoneStats = table.new(position=position.top_right, columns=3, rows=5, frame_color=color.gray, frame_width=1, border_color=color.gray, border_width=1)
+
+table.cell(zoneStats, 0, 0, "Zone Metrics", text_color=color.white, bgcolor=color.blue)
+table.cell(zoneStats, 1, 0, "Supply", text_color=color.white, bgcolor=color.red)
+table.cell(zoneStats, 2, 0, "Demand", text_color=color.white, bgcolor=color.green)
+
+table.cell(zoneStats, 0, 1, "High", text_color=color.white, bgcolor=color.gray)
+table.cell(zoneStats, 1, 1, str.tostring(supplyZoneHigh, "#.00"), text_color=color.white, bgcolor=color.new(color.red, 60))
+table.cell(zoneStats, 2, 1, str.tostring(demandZoneHigh, "#.00"), text_color=color.white, bgcolor=color.new(color.green, 60))
+
+table.cell(zoneStats, 0, 2, "Low", text_color=color.white, bgcolor=color.gray)
+table.cell(zoneStats, 1, 2, str.tostring(supplyZoneLow, "#.00"), text_color=color.white, bgcolor=color.new(color.red, 60))
+table.cell(zoneStats, 2, 2, str.tostring(demandZoneLow, "#.00"), text_color=color.white, bgcolor=color.new(color.green, 60))
+
+table.cell(zoneStats, 0, 3, "Volume", text_color=color.white, bgcolor=color.gray)
+table.cell(zoneStats, 1, 3, (supplyZoneVolumeConfirmed ? "✓ " : "") + str.tostring(supplyZoneVolume, "#"), text_color=color.white, bgcolor=color.new(color.red, 60))
+table.cell(zoneStats, 2, 3, (demandZoneVolumeConfirmed ? "✓ " : "") + str.tostring(demandZoneVolume, "#"), text_color=color.white, bgcolor=color.new(color.green, 60))
+
+table.cell(zoneStats, 0, 4, "RSI", text_color=color.white, bgcolor=color.gray)
+table.cell(zoneStats, 1, 4, (rsiOverbought ? "OB" : str.tostring(rsi, "#.0")), text_color=color.white, bgcolor=color.new(color.red, 60))
+table.cell(zoneStats, 2, 4, (rsiOversold ? "OS" : str.tostring(rsi, "#.0")), text_color=color.white, bgcolor=color.new(color.green, 60))

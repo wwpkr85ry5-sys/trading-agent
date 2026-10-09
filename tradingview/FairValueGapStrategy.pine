@@ -1,0 +1,134 @@
+//@version=5
+strategy("Fair Value Gap (FVG) Strategy", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// ============================================================================
+// FAIR VALUE GAP (FVG) STRATEGY
+// Detects and trades inefficiencies (gaps) between price levels
+// ============================================================================
+
+// Input Parameters
+fvgLookback = input(5, "FVG Lookback Period", minval=1, maxval=20)
+fvgMinGapPercent = input(0.2, "Minimum Gap Size (%)", minval=0.01, maxval=2.0)
+fvgConfirmationBars = input(2, "Confirmation Bars", minval=1, maxval=5)
+fvgUseRSI = input(true, "Use RSI Confirmation")
+fvgRsiPeriod = input(14, "RSI Period", minval=5, maxval=50)
+
+// ============================================================================
+// DETECT BULLISH FVG (Gap Up)
+// ============================================================================
+
+// Bullish FVG: current low > previous high (gap up)
+bullishGap = low > high[1]
+bullishGapSize = (low - high[1]) / high[1] * 100
+bullishGapSignificant = bullishGapSize >= fvgMinGapPercent
+
+// Confirm with volume
+bullishVolume = volume > ta.sma(volume, fvgLookback)
+
+// Confirm with RSI if enabled
+rsi = ta.rsi(close, fvgRsiPeriod)
+bullishRSI = rsi < 70 or not fvgUseRSI
+
+bullishFVG = bullishGapSignificant and bullishVolume and bullishRSI
+
+// ============================================================================
+// DETECT BEARISH FVG (Gap Down)
+// ============================================================================
+
+// Bearish FVG: current high < previous low (gap down)
+bearishGap = high < low[1]
+bearishGapSize = (low[1] - high) / low[1] * 100
+bearishGapSignificant = bearishGapSize >= fvgMinGapPercent
+
+// Confirm with volume
+bearishVolume = volume > ta.sma(volume, fvgLookback)
+
+// Confirm with RSI if enabled
+bearishRSI = rsi > 30 or not fvgUseRSI
+
+bearishFVG = bearishGapSignificant and bearishVolume and bearishRSI
+
+// ============================================================================
+// TRACK FVG LEVELS (Support/Resistance)
+// ============================================================================
+
+// Bullish FVG level (gap low becomes support)
+var bullishFVGLevel = 0.0
+var bullishFVGBars = 0
+
+if bullishFVG
+    bullishFVGLevel := low
+    bullishFVGBars := 0
+else
+    bullishFVGBars += 1
+
+// Bearish FVG level (gap high becomes resistance)
+var bearishFVGLevel = 0.0
+var bearishFVGBars = 0
+
+if bearishFVG
+    bearishFVGLevel := high
+    bearishFVGBars := 0
+else
+    bearishFVGBars += 1
+
+// ============================================================================
+// GENERATE TRADING SIGNALS
+// ============================================================================
+
+// Bullish signal: Price bounces from FVG support
+bullishSignal = close > open and bullishFVGBars < fvgConfirmationBars and close > bullishFVGLevel
+
+// Bearish signal: Price rejects from FVG resistance
+bearishSignal = close < open and bearishFVGBars < fvgConfirmationBars and close < bearishFVGLevel
+
+// ============================================================================
+// ENTRY AND EXIT LOGIC
+// ============================================================================
+
+if bullishSignal and not bullishSignal[1]
+    strategy.entry("FVG_Long", strategy.long)
+
+if bearishSignal and not bearishSignal[1]
+    strategy.entry("FVG_Short", strategy.short)
+
+// Exit when price fills the gap or reverses
+if strategy.position_size > 0 and close < bullishFVGLevel
+    strategy.close("FVG_Long")
+
+if strategy.position_size < 0 and close > bearishFVGLevel
+    strategy.close("FVG_Short")
+
+// ============================================================================
+// PLOTTING
+// ============================================================================
+
+// Plot FVG levels
+plot(bullishFVGLevel, title="Bullish FVG Level", color=color.green, linewidth=2, style=plot.style_linebr)
+plot(bearishFVGLevel, title="Bearish FVG Level", color=color.red, linewidth=2, style=plot.style_linebr)
+
+// Highlight FVG zones
+fill(plot(bullishFVGLevel), plot(bullishFVGLevel * 0.99), title="Bullish FVG Zone", color=color.new(color.green, 85))
+fill(plot(bearishFVGLevel), plot(bearishFVGLevel * 1.01), title="Bearish FVG Zone", color=color.new(color.red, 85))
+
+// Plot gap sizes
+plot(bullishGapSize, title="Bullish Gap Size", color=color.green, linewidth=1, style=plot.style_histogram)
+plot(-bearishGapSize, title="Bearish Gap Size", color=color.red, linewidth=1, style=plot.style_histogram)
+
+// Signal markers
+plotshape(bullishFVG, style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, title="Bullish FVG")
+plotshape(bearishFVG, style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, title="Bearish FVG")
+
+// Entry signals
+plotshape(bullishSignal, style=shape.triangleup, location=location.abovebar, color=color.lime, size=size.small, title="Buy Signal")
+plotshape(bearishSignal, style=shape.triangledown, location=location.belowbar, color=color.orange, size=size.small, title="Sell Signal")
+
+// Alerts
+alertmessage_bullish = "FVG: BULLISH signal - Gap support identified"
+alertmessage_bearish = "FVG: BEARISH signal - Gap resistance identified"
+
+if bullishFVG
+    alert(alertmessage_bullish, alert.freq_once_per_bar)
+
+if bearishFVG
+    alert(alertmessage_bearish, alert.freq_once_per_bar)

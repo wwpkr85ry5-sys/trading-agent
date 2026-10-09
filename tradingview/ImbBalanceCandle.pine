@@ -1,0 +1,120 @@
+//@version=5
+indicator("Imbalance and Candle Close (ICC)", overlay=true)
+
+// ============================================================================
+// IMBALANCE AND CANDLE CLOSE (ICC) INDICATOR
+// Identifies market structure breaks and liquidity sweeps
+// ============================================================================
+
+// Input Parameters
+iccLookback = input(20, "Lookback Period", minval=5, maxval=50)
+iccHighThreshold = input(1.5, "High Imbalance Threshold (std dev)", minval=0.5, maxval=3.0)
+iccShowBreaks = input(true, "Show Structure Breaks")
+iccShowSweeps = input(true, "Show Liquidity Sweeps")
+iccShowICC = input(true, "Show ICC Levels")
+
+// ============================================================================
+// CALCULATE IMBALANCE
+// ============================================================================
+
+// Body size vs wick size
+bodySize = math.abs(close - open)
+upWick = high - math.max(close, open)
+downWick = math.min(close, open) - low
+totalWicks = upWick + downWick
+
+// Imbalance ratio (body vs wicks)
+bodyWickRatio = bodySize / (totalWicks + 0.001)
+bodyWickRatioMA = ta.sma(bodyWickRatio, iccLookback)
+bodyWickRatioStdDev = ta.stdev(bodyWickRatio, iccLookback)
+
+// Normalize imbalance
+imbNormalized = (bodyWickRatio - bodyWickRatioMA) / (bodyWickRatioStdDev + 0.001)
+
+// ============================================================================
+// DETECT MARKET STRUCTURE BREAKS
+// ============================================================================
+
+// Higher High (HH) and Higher Low (HL) = Uptrend
+highestHigh = ta.highest(high, iccLookback)
+lowestLow = ta.lowest(low, iccLookback)
+
+upstroke = high > highestHigh[1] and close > open
+downstroke = low < lowestLow[1] and close < open
+
+// Momentum imbalance
+momentum = (close - open) / (high - low + 0.001)
+momentumMA = ta.sma(momentum, iccLookback)
+
+// ============================================================================
+// DETECT LIQUIDITY SWEEPS (Wick Penetration)
+// ============================================================================
+
+// Bullish sweep: low sweep below previous low, then close above
+bullishSweep = low < lowestLow[1] and close > open and close > ta.sma(close, iccLookback)
+
+// Bearish sweep: high sweep above previous high, then close below
+bearishSweep = high > highestHigh[1] and close < open and close < ta.sma(close, iccLookback)
+
+// ============================================================================
+// IDENTIFY ICC LEVELS (Imbalance Reversal Points)
+// ============================================================================
+
+// ICC occurs when price action shows extreme imbalance then reversal
+iccBullish = imbNormalized > iccHighThreshold and bullishSweep
+iccBearish = imbNormalized < -iccHighThreshold and bearishSweep
+
+var iccBullishLevel = 0.0
+var iccBearishLevel = 0.0
+
+if iccBullish
+    iccBullishLevel := low
+
+if iccBearish
+    iccBearishLevel := high
+
+// ============================================================================
+// GENERATE TRADING SIGNALS
+// ============================================================================
+
+// Long signal: Bullish sweep + structure break + high imbalance
+longSignal = bullishSweep and upstroke and imbNormalized > 0
+
+// Short signal: Bearish sweep + structure break + high imbalance
+shortSignal = bearishSweep and downstroke and imbNormalized < 0
+
+// ============================================================================
+// PLOTTING
+// ============================================================================
+
+// Plot imbalance
+plot(imbNormalized, title="Normalized Imbalance", color=color.blue, linewidth=2)
+hline(iccHighThreshold, title="High Threshold", color=color.green, linestyle=hline.style_dashed)
+hline(-iccHighThreshold, title="Low Threshold", color=color.red, linestyle=hline.style_dashed)
+hline(0, title="Zero Line", color=color.gray, linestyle=hline.style_dotted)
+
+// Plot momentum
+plot(momentum, title="Momentum", color=color.orange, linewidth=1)
+plot(momentumMA, title="Momentum MA", color=color.purple, linewidth=1)
+
+// Plot ICC levels
+if iccShowICC
+    plot(iccBullishLevel, title="ICC Bullish Level", color=color.green, linewidth=2, style=plot.style_linebr)
+    plot(iccBearishLevel, title="ICC Bearish Level", color=color.red, linewidth=2, style=plot.style_linebr)
+
+// Highlight structure breaks
+if iccShowBreaks
+    plotshape(upstroke, style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, title="Upstroke")
+    plotshape(downstroke, style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, title="Downstroke")
+
+// Highlight liquidity sweeps
+if iccShowSweeps
+    plotshape(bullishSweep, style=shape.diamond, location=location.belowbar, color=color.lime, size=size.small, title="Bullish Sweep")
+    plotshape(bearishSweep, style=shape.diamond, location=location.abovebar, color=color.orange, size=size.small, title="Bearish Sweep")
+
+// Signal markers
+plotshape(longSignal, style=shape.triangleup, location=location.abovebar, color=color.new(color.green, 0), size=size.small, title="Long Signal")
+plotshape(shortSignal, style=shape.triangledown, location=location.belowbar, color=color.new(color.red, 0), size=size.small, title="Short Signal")
+
+// Background coloring
+bgcolor(iccBullish ? color.new(color.green, 90) : iccBearish ? color.new(color.red, 90) : na)
