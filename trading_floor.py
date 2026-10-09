@@ -304,3 +304,18 @@ class TradingFloor:
         t = self.tickets[ticket_id]
         t.status = "closed"
         self.risk.register_close(t, pnl)
+
+    def propose_from_desk(self, decision: dict, entry: float, invalidation: float,
+                          second_source_confirms: bool, size: float = 0.10) -> Ticket | None:
+        """Feed a MultiAgentDesk.analyze() result through the floor.
+
+        The desk's selection Sharpe is treated as the backtest check and its
+        holdout Sharpe as the out-of-sample check. FLAT decisions are ignored.
+        """
+        if decision.get("action") not in ("LONG", "SHORT"):
+            return None
+        flag = {"asset": decision["symbol"], "kind": "desk_signal", "value": decision.get("consensus")}
+        return self.propose(
+            flag, second_source_confirms, decision["action"].lower(), entry, invalidation, size,
+            backtest_ok=decision.get("select_sharpe", 0) > 0,
+            out_of_sample_ok=decision.get("holdout_sharpe", 0) > 0)

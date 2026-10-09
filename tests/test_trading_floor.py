@@ -68,3 +68,12 @@ def test_chat_is_shared_and_ticket_has_chain():
     t = _propose(f)
     assert t.chain[0] == "Market Analyst" and "Risk Manager" in t.chain
     assert {m["from"] for m in f.chat.messages} >= {"Research Analyst", "Strategist", "Risk Manager"}
+
+
+def test_propose_from_desk():
+    f = TradingFloor()
+    d = {"symbol": "SPY", "action": "LONG", "consensus": 0.6, "select_sharpe": 1.1, "holdout_sharpe": 0.4}
+    t = f.propose_from_desk(d, entry=100.0, invalidation=98.0, second_source_confirms=True)
+    assert t.asset == "SPY" and t.direction == "long"
+    assert f.propose_from_desk(dict(d, holdout_sharpe=-0.1), 100.0, 98.0, True) is None
+    assert f.propose_from_desk(dict(d, action="FLAT"), 100.0, 98.0, True) is None
