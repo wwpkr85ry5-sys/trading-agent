@@ -24,6 +24,10 @@ showPD       = input.bool(true, "Show Premium/Discount & Equilibrium", group="SM
 showEQ       = input.bool(true, "Show Equal Highs/Lows (Liquidity)", group="SMC")
 eqTol        = input.float(0.1, "Equal H/L Tolerance (x ATR)", minval=0.01, step=0.01, group="SMC")
 smcLen       = input.int(20, "Swing Structure Length", minval=5, maxval=100, group="SMC")
+showStrat    = input.bool(true, "Show Strategy Confluence Signals", group="Strategies")
+useKillzone  = input.bool(true, "ICT Killzone Filter (London/NY)", group="Strategies")
+kzTz         = input.string("America/New_York", "Killzone Timezone", group="Strategies")
+minVotes     = input.int(3, "Min Strategy Votes For Signal", minval=1, maxval=5, group="Strategies")
 maxBoxes     = input.int(10, "Max Active Boxes Per Type", minval=1, maxval=25, group="Zones")
 
 atr = ta.atr(14)
@@ -188,6 +192,35 @@ if not na(pl)
 smcBuy = inDiscount and sTrend == 1
 smcSell = inPremium and sTrend == -1
 
+// ---- Strategy confluence (each strategy votes +1 / -1) ----
+// 1) Trend following: EMA 21/55 + 200 filter
+ema200 = ta.ema(close, 200)
+vTrend = (ta.ema(close, 21) > ta.ema(close, 55) and close > ema200) ? 1 : (ta.ema(close, 21) < ta.ema(close, 55) and close < ema200) ? -1 : 0
+// 2) Momentum: MACD histogram direction + RSI mean-reversion extremes
+[macdL, macdS, macdH] = ta.macd(close, 12, 26, 9)
+rsi = ta.rsi(close, 14)
+vMomentum = (macdH > 0 and macdH > macdH[1]) ? 1 : (macdH < 0 and macdH < macdH[1]) ? -1 : 0
+vRsi = rsi < 30 ? 1 : rsi > 70 ? -1 : 0
+// 3) Breakout: Donchian 20 (turtle style)
+dcUp = ta.highest(high, 20)[1]
+dcDn = ta.lowest(low, 20)[1]
+vBreakout = close > dcUp ? 1 : close < dcDn ? -1 : 0
+// 4) VWAP bias
+vwapV = ta.vwap(hlc3)
+vVwap = close > vwapV ? 1 : -1
+// ICT killzones: London 02:00-05:00, NY AM 08:30-11:00 (New York time)
+inKillzone = not useKillzone or not na(time(timeframe.period, "0200-0500", kzTz)) or not na(time(timeframe.period, "0830-1100", kzTz))
+bullVotes = (vTrend == 1 ? 1 : 0) + (vMomentum == 1 ? 1 : 0) + (vRsi == 1 ? 1 : 0) + (vBreakout == 1 ? 1 : 0) + (vVwap == 1 ? 1 : 0)
+bearVotes = (vTrend == -1 ? 1 : 0) + (vMomentum == -1 ? 1 : 0) + (vRsi == -1 ? 1 : 0) + (vBreakout == -1 ? 1 : 0) + (vVwap == -1 ? 1 : 0)
+stratBuy = showStrat and inKillzone and bullVotes >= minVotes and (inDiscount or na(eq))
+stratSell = showStrat and inKillzone and bearVotes >= minVotes and (inPremium or na(eq))
+plotshape(stratBuy and not stratBuy[1], "Confluence Long", shape.labelup, location.belowbar, color.new(color.green, 0), text="LONG", textcolor=color.white, size=size.small)
+plotshape(stratSell and not stratSell[1], "Confluence Short", shape.labeldown, location.abovebar, color.new(color.red, 0), text="SHORT", textcolor=color.white, size=size.small)
+bgcolor(useKillzone and inKillzone ? color.new(color.blue, 96) : na)
+plot(vwapV, "VWAP", color.new(color.yellow, 40))
+alertcondition(stratBuy and not stratBuy[1], "Confluence Long", "Multi-strategy long")
+alertcondition(stratSell and not stratSell[1], "Confluence Short", "Multi-strategy short")
+
 // ---- Reversal signals: sweep + order flow confirmation ----
 demandTop = array.size(demandBoxes) > 0 ? box.get_top(array.get(demandBoxes, math.max(array.size(demandBoxes) - 1, 0))) : na
 supplyBot = array.size(supplyBoxes) > 0 ? box.get_bottom(array.get(supplyBoxes, math.max(array.size(supplyBoxes) - 1, 0))) : na
@@ -213,12 +246,13 @@ score += cumDelta > ta.sma(cumDelta, 20) ? 1.0 : -1.0
 score += (inDemand ? 1.5 : 0) - (inSupply ? 1.5 : 0)
 score += (sweepLow ? 2.0 : 0) - (sweepHigh ? 2.0 : 0)
 score += sTrend * 1.0
+score += (bullVotes - bearVotes) * 0.4
 score += (inDiscount ? 0.5 : 0) - (inPremium ? 0.5 : 0)
 score += (openBullFVG ? 0.5 : 0) - (openBearFVG ? 0.5 : 0)
-confidence = math.min(math.abs(score) / 11.0 * 100, 100)
+confidence = math.min(math.abs(score) / 13.0 * 100, 100)
 prediction = score >= 2 ? "BULLISH" : score <= -2 ? "BEARISH" : "NEUTRAL"
 
-var table info = table.new(position.top_right, 2, 5, bgcolor=color.new(color.black, 20), border_width=1)
+var table info = table.new(position.top_right, 2, 6, bgcolor=color.new(color.black, 20), border_width=1)
 if showPredict and barstate.islast
     c = score >= 2 ? color.lime : score <= -2 ? color.red : color.gray
     table.cell(info, 0, 0, "Next Move", text_color=color.white)
@@ -233,6 +267,10 @@ if showPredict and barstate.islast
 if showPredict and barstate.islast
     table.cell(info, 0, 4, "SMC Zone", text_color=color.white)
     table.cell(info, 1, 4, inDiscount ? "Discount" : inPremium ? "Premium" : "-", text_color=inDiscount ? color.lime : inPremium ? color.red : color.gray)
+
+if showPredict and barstate.islast
+    table.cell(info, 0, 5, "Strategy Votes", text_color=color.white)
+    table.cell(info, 1, 5, "Bull " + str.tostring(bullVotes) + " / Bear " + str.tostring(bearVotes), text_color=bullVotes > bearVotes ? color.lime : bearVotes > bullVotes ? color.red : color.gray)
 
 plot(emaFast, "EMA 21", color.new(color.aqua, 50))
 plot(emaSlow, "EMA 55", color.new(color.purple, 50))
