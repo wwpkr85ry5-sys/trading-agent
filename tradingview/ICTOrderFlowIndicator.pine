@@ -120,8 +120,10 @@ if showZones and displaceDn and close[1] > open[1]
     addBox(supplyBoxes, high[1], low[1], color.orange)
 
 // ---- Reversal signals: sweep + order flow confirmation ----
-inDemand = array.size(demandBoxes) > 0 and low <= box.get_top(array.get(demandBoxes, array.size(demandBoxes) - 1))
-inSupply = array.size(supplyBoxes) > 0 and high >= box.get_bottom(array.get(supplyBoxes, array.size(supplyBoxes) - 1))
+demandTop = array.size(demandBoxes) > 0 ? box.get_top(array.get(demandBoxes, math.max(array.size(demandBoxes) - 1, 0))) : na
+supplyBot = array.size(supplyBoxes) > 0 ? box.get_bottom(array.get(supplyBoxes, math.max(array.size(supplyBoxes) - 1, 0))) : na
+inDemand = not na(demandTop) and low <= demandTop
+inSupply = not na(supplyBot) and high >= supplyBot
 buySignal = (sweepLow or inDemand) and delta > 0 and close > open and (bullBalloon or choch_up or sweepLow)
 sellSignal = (sweepHigh or inSupply) and delta < 0 and close < open and (bearBalloon or choch_dn or sweepHigh)
 
