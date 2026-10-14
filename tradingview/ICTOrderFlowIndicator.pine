@@ -28,6 +28,11 @@ showStrat    = input.bool(true, "Show Strategy Confluence Signals", group="Strat
 useKillzone  = input.bool(true, "ICT Killzone Filter (London/NY)", group="Strategies")
 kzTz         = input.string("America/New_York", "Killzone Timezone", group="Strategies")
 minVotes     = input.int(3, "Min Strategy Votes For Signal", minval=1, maxval=5, group="Strategies")
+aPlus        = input.bool(true, "A+ Mode (stricter filters, fewer signals)", group="Accuracy")
+htfTf        = input.timeframe("240", "Higher Timeframe Trend Filter", group="Accuracy")
+rrTarget     = input.float(1.5, "Target (x ATR) for Win/Loss Tracking", minval=0.5, step=0.25, group="Accuracy")
+rrStop       = input.float(1.0, "Stop (x ATR) for Win/Loss Tracking", minval=0.5, step=0.25, group="Accuracy")
+maxHold      = input.int(30, "Max Bars To Resolve Signal", minval=5, group="Accuracy")
 maxBoxes     = input.int(10, "Max Active Boxes Per Type", minval=1, maxval=25, group="Zones")
 
 atr = ta.atr(14)
@@ -212,12 +217,46 @@ vVwap = close > vwapV ? 1 : -1
 inKillzone = not useKillzone or not na(time(timeframe.period, "0200-0500", kzTz)) or not na(time(timeframe.period, "0830-1100", kzTz))
 bullVotes = (vTrend == 1 ? 1 : 0) + (vMomentum == 1 ? 1 : 0) + (vRsi == 1 ? 1 : 0) + (vBreakout == 1 ? 1 : 0) + (vVwap == 1 ? 1 : 0)
 bearVotes = (vTrend == -1 ? 1 : 0) + (vMomentum == -1 ? 1 : 0) + (vRsi == -1 ? 1 : 0) + (vBreakout == -1 ? 1 : 0) + (vVwap == -1 ? 1 : 0)
-stratBuy = showStrat and inKillzone and bullVotes >= minVotes and (inDiscount or na(eq))
-stratSell = showStrat and inKillzone and bearVotes >= minVotes and (inPremium or na(eq))
+htfTrend = request.security(syminfo.tickerid, htfTf, ta.ema(close, 50) > ta.ema(close, 200) ? 1 : -1, lookahead=barmerge.lookahead_off)
+okBuy = not aPlus or (bullVotes >= 4 and htfTrend == 1 and delta > 0 and volume > volAvg and close > open)
+okSell = not aPlus or (bearVotes >= 4 and htfTrend == -1 and delta < 0 and volume > volAvg and close < open)
+stratBuy = showStrat and inKillzone and bullVotes >= minVotes and (inDiscount or na(eq)) and okBuy
+stratSell = showStrat and inKillzone and bearVotes >= minVotes and (inPremium or na(eq)) and okSell
 plotshape(stratBuy and not stratBuy[1], "Confluence Long", shape.labelup, location.belowbar, color.new(color.green, 0), text="LONG", textcolor=color.white, size=size.small)
 plotshape(stratSell and not stratSell[1], "Confluence Short", shape.labeldown, location.abovebar, color.new(color.red, 0), text="SHORT", textcolor=color.white, size=size.small)
 bgcolor(useKillzone and inKillzone ? color.new(color.blue, 96) : na)
 plot(vwapV, "VWAP", color.new(color.yellow, 40))
+// ---- Live win-rate tracker (measures real accuracy on this chart) ----
+var int wins = 0
+var int losses = 0
+var int tDir = 0
+var float tEntry = na
+var float tStop = na
+var float tTarget = na
+var int tStart = na
+if tDir != 0
+    hitT = tDir == 1 ? high >= tTarget : low <= tTarget
+    hitS = tDir == 1 ? low <= tStop : high >= tStop
+    if hitS
+        losses += 1
+        tDir := 0
+    else if hitT
+        wins += 1
+        tDir := 0
+    else if bar_index - tStart >= maxHold
+        losses += 1
+        tDir := 0
+newLong = stratBuy and not stratBuy[1]
+newShort = stratSell and not stratSell[1]
+if tDir == 0 and (newLong or newShort)
+    tDir := newLong ? 1 : -1
+    tEntry := close
+    tStop := close - tDir * atr * rrStop
+    tTarget := close + tDir * atr * rrTarget
+    tStart := bar_index
+totalTrades = wins + losses
+winRate = totalTrades > 0 ? wins * 100.0 / totalTrades : na
+
 alertcondition(stratBuy and not stratBuy[1], "Confluence Long", "Multi-strategy long")
 alertcondition(stratSell and not stratSell[1], "Confluence Short", "Multi-strategy short")
 
@@ -252,7 +291,7 @@ score += (openBullFVG ? 0.5 : 0) - (openBearFVG ? 0.5 : 0)
 confidence = math.min(math.abs(score) / 13.0 * 100, 100)
 prediction = score >= 2 ? "BULLISH" : score <= -2 ? "BEARISH" : "NEUTRAL"
 
-var table info = table.new(position.top_right, 2, 6, bgcolor=color.new(color.black, 20), border_width=1)
+var table info = table.new(position.top_right, 2, 7, bgcolor=color.new(color.black, 20), border_width=1)
 if showPredict and barstate.islast
     c = score >= 2 ? color.lime : score <= -2 ? color.red : color.gray
     table.cell(info, 0, 0, "Next Move", text_color=color.white)
@@ -271,6 +310,10 @@ if showPredict and barstate.islast
 if showPredict and barstate.islast
     table.cell(info, 0, 5, "Strategy Votes", text_color=color.white)
     table.cell(info, 1, 5, "Bull " + str.tostring(bullVotes) + " / Bear " + str.tostring(bearVotes), text_color=bullVotes > bearVotes ? color.lime : bearVotes > bullVotes ? color.red : color.gray)
+
+if showPredict and barstate.islast
+    table.cell(info, 0, 6, "Win Rate (live)", text_color=color.white)
+    table.cell(info, 1, 6, na(winRate) ? "n/a" : str.tostring(winRate, "#.#") + "% (" + str.tostring(totalTrades) + ")", text_color=na(winRate) ? color.gray : winRate >= 60 ? color.lime : color.orange)
 
 plot(emaFast, "EMA 21", color.new(color.aqua, 50))
 plot(emaSlow, "EMA 55", color.new(color.purple, 50))
