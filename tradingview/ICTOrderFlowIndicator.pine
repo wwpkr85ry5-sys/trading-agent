@@ -1,0 +1,164 @@
+//@version=5
+indicator("ICT Order Flow Balloons + Next Move", overlay=true, max_boxes_count=100, max_labels_count=200, max_lines_count=100)
+
+// ============================================================================
+// ICT ORDER FLOW INDICATOR
+// - Order flow volume balloons (estimated buy/sell delta from candle structure)
+// - Fair Value Gaps (FVG), Order Blocks (supply/demand), liquidity sweeps
+// - Market structure (BOS/CHoCH), reversal signals, next-move prediction
+// Note: TradingView has no true tick data in indicators; delta is estimated.
+// ============================================================================
+
+// ---- Inputs ----
+swingLen     = input.int(5, "Swing Length", minval=2, maxval=20, group="Structure")
+volLen       = input.int(20, "Volume Average Length", minval=5, group="Order Flow")
+balloonMult  = input.float(2.0, "Balloon Volume Multiplier", minval=1.0, step=0.1, group="Order Flow")
+showBalloons = input.bool(true, "Show Volume Balloons", group="Order Flow")
+showFVG      = input.bool(true, "Show Fair Value Gaps", group="FVG")
+minGapAtr    = input.float(0.3, "Min FVG Size (x ATR)", minval=0.0, step=0.05, group="FVG")
+showZones    = input.bool(true, "Show Supply/Demand Zones (Order Blocks)", group="Zones")
+showSignals  = input.bool(true, "Show Reversal Signals", group="Signals")
+showPredict  = input.bool(true, "Show Next Move Prediction", group="Signals")
+maxBoxes     = input.int(10, "Max Active Boxes Per Type", minval=1, maxval=25, group="Zones")
+
+atr = ta.atr(14)
+volAvg = ta.sma(volume, volLen)
+
+// ---- Order flow (estimated delta) ----
+rng = high - low
+buyVol = rng > 0 ? volume * (close - low) / rng : volume / 2
+sellVol = volume - buyVol
+delta = buyVol - sellVol
+cumDelta = ta.cum(delta)
+bigVol = volume > volAvg * balloonMult
+bullBalloon = bigVol and delta > 0
+bearBalloon = bigVol and delta < 0
+
+fmt(v) => str.tostring(v, format.volume)
+
+if showBalloons and bullBalloon
+    label.new(bar_index, low, "▲ " + fmt(delta), style=label.style_label_up,
+         color=color.new(color.green, 20), textcolor=color.white, size=size.small)
+if showBalloons and bearBalloon
+    label.new(bar_index, high, "▼ " + fmt(math.abs(delta)), style=label.style_label_down,
+         color=color.new(color.red, 20), textcolor=color.white, size=size.small)
+
+// ---- Market structure ----
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+var float lastHigh = na
+var float lastLow = na
+var int trend = 0
+if not na(ph)
+    lastHigh := ph
+if not na(pl)
+    lastLow := pl
+
+bos_up = not na(lastHigh) and ta.crossover(close, lastHigh)
+bos_dn = not na(lastLow) and ta.crossunder(close, lastLow)
+choch_up = bos_up and trend == -1
+choch_dn = bos_dn and trend == 1
+if bos_up
+    trend := 1
+    lastHigh := na
+if bos_dn
+    trend := -1
+    lastLow := na
+
+plotshape(showSignals and choch_up, "CHoCH Up", shape.labelup, location.belowbar, color.new(color.teal, 0), text="CHoCH", textcolor=color.white, size=size.tiny)
+plotshape(showSignals and choch_dn, "CHoCH Down", shape.labeldown, location.abovebar, color.new(color.maroon, 0), text="CHoCH", textcolor=color.white, size=size.tiny)
+
+// ---- Liquidity sweeps (price action reversal) ----
+recentHigh = ta.highest(high, swingLen * 3)[1]
+recentLow = ta.lowest(low, swingLen * 3)[1]
+sweepHigh = high > recentHigh and close < recentHigh and close < open
+sweepLow = low < recentLow and close > recentLow and close > open
+
+// ---- Fair Value Gaps ----
+bullFVG = low > high[2] and close[1] > open[1] and (low - high[2]) >= atr * minGapAtr
+bearFVG = high < low[2] and close[1] < open[1] and (low[2] - high) >= atr * minGapAtr
+
+var array<box> bullBoxes = array.new<box>()
+var array<box> bearBoxes = array.new<box>()
+var array<box> demandBoxes = array.new<box>()
+var array<box> supplyBoxes = array.new<box>()
+
+// Extend boxes, remove when mitigated
+mitigate(array<box> arr, bool isBull) =>
+    int i = array.size(arr) - 1
+    while i >= 0
+        box b = array.get(arr, i)
+        box.set_right(b, bar_index)
+        bool filled = isBull ? close < box.get_bottom(b) : close > box.get_top(b)
+        if filled
+            box.set_bgcolor(b, color.new(color.gray, 92))
+            box.set_border_color(b, color.new(color.gray, 70))
+            array.remove(arr, i)
+        i -= 1
+
+addBox(array<box> arr, float top, float bot, color c) =>
+    array.push(arr, box.new(bar_index - 2, top, bar_index, bot, border_color=color.new(c, 40), bgcolor=color.new(c, 85)))
+    if array.size(arr) > maxBoxes
+        box.delete(array.shift(arr))
+
+mitigate(bullBoxes, true)
+mitigate(bearBoxes, false)
+mitigate(demandBoxes, true)
+mitigate(supplyBoxes, false)
+
+if showFVG and bullFVG
+    addBox(bullBoxes, low, high[2], color.green)
+if showFVG and bearFVG
+    addBox(bearBoxes, low[2], high, color.red)
+
+// ---- Order blocks as demand/supply: last opposite candle before displacement ----
+displaceUp = close > open and (close - open) > atr * 1.5
+displaceDn = close < open and (open - close) > atr * 1.5
+if showZones and displaceUp and close[1] < open[1]
+    addBox(demandBoxes, high[1], low[1], color.blue)
+if showZones and displaceDn and close[1] > open[1]
+    addBox(supplyBoxes, high[1], low[1], color.orange)
+
+// ---- Reversal signals: sweep + order flow confirmation ----
+inDemand = array.size(demandBoxes) > 0 and low <= box.get_top(array.get(demandBoxes, array.size(demandBoxes) - 1))
+inSupply = array.size(supplyBoxes) > 0 and high >= box.get_bottom(array.get(supplyBoxes, array.size(supplyBoxes) - 1))
+buySignal = (sweepLow or inDemand) and delta > 0 and close > open and (bullBalloon or choch_up or sweepLow)
+sellSignal = (sweepHigh or inSupply) and delta < 0 and close < open and (bearBalloon or choch_dn or sweepHigh)
+
+plotshape(showSignals and buySignal, "Buy Reversal", shape.triangleup, location.belowbar, color.lime, size=size.small, text="BUY")
+plotshape(showSignals and sellSignal, "Sell Reversal", shape.triangledown, location.abovebar, color.red, size=size.small, text="SELL")
+
+// ---- Next move prediction: weighted score ----
+emaFast = ta.ema(close, 21)
+emaSlow = ta.ema(close, 55)
+deltaSlope = ta.sma(delta, 5)
+openBullFVG = array.size(bullBoxes) > 0
+openBearFVG = array.size(bearBoxes) > 0
+score = 0.0
+score += trend * 2.0
+score += emaFast > emaSlow ? 1.0 : -1.0
+score += deltaSlope > 0 ? 1.0 : -1.0
+score += cumDelta > ta.sma(cumDelta, 20) ? 1.0 : -1.0
+score += (inDemand ? 1.5 : 0) - (inSupply ? 1.5 : 0)
+score += (sweepLow ? 2.0 : 0) - (sweepHigh ? 2.0 : 0)
+score += (openBullFVG ? 0.5 : 0) - (openBearFVG ? 0.5 : 0)
+confidence = math.min(math.abs(score) / 9.0 * 100, 100)
+prediction = score >= 2 ? "BULLISH ▲" : score <= -2 ? "BEARISH ▼" : "NEUTRAL ◆"
+
+var table info = table.new(position.top_right, 2, 4, bgcolor=color.new(color.black, 20), border_width=1)
+if showPredict and barstate.islast
+    c = score >= 2 ? color.lime : score <= -2 ? color.red : color.gray
+    table.cell(info, 0, 0, "Next Move", text_color=color.white)
+    table.cell(info, 1, 0, prediction, text_color=c)
+    table.cell(info, 0, 1, "Confidence", text_color=color.white)
+    table.cell(info, 1, 1, str.tostring(confidence, "#") + "%", text_color=c)
+    table.cell(info, 0, 2, "Structure", text_color=color.white)
+    table.cell(info, 1, 2, trend == 1 ? "Bullish" : trend == -1 ? "Bearish" : "None", text_color=color.white)
+    table.cell(info, 0, 3, "Delta (est.)", text_color=color.white)
+    table.cell(info, 1, 3, fmt(delta), text_color=delta > 0 ? color.lime : color.red)
+
+plot(emaFast, "EMA 21", color.new(color.aqua, 50))
+plot(emaSlow, "EMA 55", color.new(color.purple, 50))
+
+alertcondition(buySignal, "ICT Buy Reversal", "Bullish reversal signal")
+alertcondition(sellSignal, "ICT Sell Reversal", "Bearish reversal signal")
