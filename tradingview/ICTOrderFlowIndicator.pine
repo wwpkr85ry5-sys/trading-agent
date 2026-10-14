@@ -19,6 +19,11 @@ minGapAtr    = input.float(0.3, "Min FVG Size (x ATR)", minval=0.0, step=0.05, g
 showZones    = input.bool(true, "Show Supply/Demand Zones (Order Blocks)", group="Zones")
 showSignals  = input.bool(true, "Show Reversal Signals", group="Signals")
 showPredict  = input.bool(true, "Show Next Move Prediction", group="Signals")
+showSMC      = input.bool(true, "Show Smart Money Concepts", group="SMC")
+showPD       = input.bool(true, "Show Premium/Discount & Equilibrium", group="SMC")
+showEQ       = input.bool(true, "Show Equal Highs/Lows (Liquidity)", group="SMC")
+eqTol        = input.float(0.1, "Equal H/L Tolerance (x ATR)", minval=0.01, step=0.01, group="SMC")
+smcLen       = input.int(20, "Swing Structure Length", minval=5, maxval=100, group="SMC")
 maxBoxes     = input.int(10, "Max Active Boxes Per Type", minval=1, maxval=25, group="Zones")
 
 atr = ta.atr(14)
@@ -119,13 +124,77 @@ if showZones and displaceUp and close[1] < open[1]
 if showZones and displaceDn and close[1] > open[1]
     addBox(supplyBoxes, high[1], low[1], color.orange)
 
+// ---- Smart Money Concepts ----
+// Swing structure (larger pivots): BOS / CHoCH lines
+sph = ta.pivothigh(high, smcLen, smcLen)
+spl = ta.pivotlow(low, smcLen, smcLen)
+var float sHigh = na
+var float sLow = na
+var int sHighBar = na
+var int sLowBar = na
+var int sTrend = 0
+if not na(sph)
+    sHigh := sph
+    sHighBar := bar_index - smcLen
+if not na(spl)
+    sLow := spl
+    sLowBar := bar_index - smcLen
+
+sBosUp = not na(sHigh) and ta.crossover(close, sHigh)
+sBosDn = not na(sLow) and ta.crossunder(close, sLow)
+if showSMC and sBosUp
+    label.new(bar_index, sHigh, sTrend == -1 ? "CHoCH" : "BOS", style=label.style_label_down, color=color.new(color.green, 70), textcolor=color.green, size=size.tiny)
+    line.new(sHighBar, sHigh, bar_index, sHigh, color=color.green, style=line.style_dashed)
+if showSMC and sBosDn
+    label.new(bar_index, sLow, sTrend == 1 ? "CHoCH" : "BOS", style=label.style_label_up, color=color.new(color.red, 70), textcolor=color.red, size=size.tiny)
+    line.new(sLowBar, sLow, bar_index, sLow, color=color.red, style=line.style_dashed)
+if sBosUp
+    sTrend := 1
+    sHigh := na
+if sBosDn
+    sTrend := -1
+    sLow := na
+
+// Premium / Discount from the most recent swing range
+var float rngHigh = na
+var float rngLow = na
+if not na(sph)
+    rngHigh := sph
+if not na(spl)
+    rngLow := spl
+eq = (rngHigh + rngLow) / 2
+ote618 = rngHigh - (rngHigh - rngLow) * 0.618
+ote786 = rngHigh - (rngHigh - rngLow) * 0.786
+inPremium = not na(eq) and close > eq
+inDiscount = not na(eq) and close < eq
+plot(showSMC and showPD ? rngHigh : na, "Swing High", color.new(color.red, 60), style=plot.style_stepline)
+plot(showSMC and showPD ? rngLow : na, "Swing Low", color.new(color.green, 60), style=plot.style_stepline)
+plot(showSMC and showPD ? eq : na, "Equilibrium", color.new(color.gray, 30), style=plot.style_stepline)
+bgcolor(showSMC and showPD and inDiscount ? color.new(color.green, 95) : showSMC and showPD and inPremium ? color.new(color.red, 95) : na)
+
+// Equal highs / lows = resting liquidity
+var float lastPh = na
+var float lastPl = na
+if not na(ph)
+    if showSMC and showEQ and not na(lastPh) and math.abs(ph - lastPh) <= atr * eqTol
+        label.new(bar_index - swingLen, ph, "EQH", style=label.style_label_down, color=color.new(color.orange, 60), textcolor=color.orange, size=size.tiny)
+    lastPh := ph
+if not na(pl)
+    if showSMC and showEQ and not na(lastPl) and math.abs(pl - lastPl) <= atr * eqTol
+        label.new(bar_index - swingLen, pl, "EQL", style=label.style_label_up, color=color.new(color.aqua, 60), textcolor=color.aqua, size=size.tiny)
+    lastPl := pl
+
+// SMC confluence: buy only from discount, sell only from premium
+smcBuy = inDiscount and sTrend == 1
+smcSell = inPremium and sTrend == -1
+
 // ---- Reversal signals: sweep + order flow confirmation ----
 demandTop = array.size(demandBoxes) > 0 ? box.get_top(array.get(demandBoxes, math.max(array.size(demandBoxes) - 1, 0))) : na
 supplyBot = array.size(supplyBoxes) > 0 ? box.get_bottom(array.get(supplyBoxes, math.max(array.size(supplyBoxes) - 1, 0))) : na
 inDemand = not na(demandTop) and low <= demandTop
 inSupply = not na(supplyBot) and high >= supplyBot
-buySignal = (sweepLow or inDemand) and delta > 0 and close > open and (bullBalloon or choch_up or sweepLow)
-sellSignal = (sweepHigh or inSupply) and delta < 0 and close < open and (bearBalloon or choch_dn or sweepHigh)
+buySignal = (sweepLow or inDemand) and (not showSMC or not inPremium) and delta > 0 and close > open and (bullBalloon or choch_up or sweepLow)
+sellSignal = (sweepHigh or inSupply) and (not showSMC or not inDiscount) and delta < 0 and close < open and (bearBalloon or choch_dn or sweepHigh)
 
 plotshape(showSignals and buySignal, "Buy Reversal", shape.triangleup, location.belowbar, color.lime, size=size.small, text="BUY")
 plotshape(showSignals and sellSignal, "Sell Reversal", shape.triangledown, location.abovebar, color.red, size=size.small, text="SELL")
@@ -143,11 +212,13 @@ score += deltaSlope > 0 ? 1.0 : -1.0
 score += cumDelta > ta.sma(cumDelta, 20) ? 1.0 : -1.0
 score += (inDemand ? 1.5 : 0) - (inSupply ? 1.5 : 0)
 score += (sweepLow ? 2.0 : 0) - (sweepHigh ? 2.0 : 0)
+score += sTrend * 1.0
+score += (inDiscount ? 0.5 : 0) - (inPremium ? 0.5 : 0)
 score += (openBullFVG ? 0.5 : 0) - (openBearFVG ? 0.5 : 0)
-confidence = math.min(math.abs(score) / 9.0 * 100, 100)
+confidence = math.min(math.abs(score) / 11.0 * 100, 100)
 prediction = score >= 2 ? "BULLISH" : score <= -2 ? "BEARISH" : "NEUTRAL"
 
-var table info = table.new(position.top_right, 2, 4, bgcolor=color.new(color.black, 20), border_width=1)
+var table info = table.new(position.top_right, 2, 5, bgcolor=color.new(color.black, 20), border_width=1)
 if showPredict and barstate.islast
     c = score >= 2 ? color.lime : score <= -2 ? color.red : color.gray
     table.cell(info, 0, 0, "Next Move", text_color=color.white)
@@ -158,6 +229,10 @@ if showPredict and barstate.islast
     table.cell(info, 1, 2, trend == 1 ? "Bullish" : trend == -1 ? "Bearish" : "None", text_color=color.white)
     table.cell(info, 0, 3, "Delta (est.)", text_color=color.white)
     table.cell(info, 1, 3, fmt(delta), text_color=delta > 0 ? color.lime : color.red)
+
+if showPredict and barstate.islast
+    table.cell(info, 0, 4, "SMC Zone", text_color=color.white)
+    table.cell(info, 1, 4, inDiscount ? "Discount" : inPremium ? "Premium" : "-", text_color=inDiscount ? color.lime : inPremium ? color.red : color.gray)
 
 plot(emaFast, "EMA 21", color.new(color.aqua, 50))
 plot(emaSlow, "EMA 55", color.new(color.purple, 50))
