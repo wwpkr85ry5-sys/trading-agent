@@ -30,8 +30,10 @@ kzTz         = input.string("America/New_York", "Killzone Timezone", group="Stra
 minVotes     = input.int(3, "Min Strategy Votes For Signal", minval=1, maxval=5, group="Strategies")
 aPlus        = input.bool(true, "A+ Mode (stricter filters, fewer signals)", group="Accuracy")
 htfTf        = input.timeframe("240", "Higher Timeframe Trend Filter", group="Accuracy")
-rrTarget     = input.float(1.5, "Target (x ATR) for Win/Loss Tracking", minval=0.5, step=0.25, group="Accuracy")
-rrStop       = input.float(1.0, "Stop (x ATR) for Win/Loss Tracking", minval=0.5, step=0.25, group="Accuracy")
+minRR        = input.float(2.0, "Minimum Reward:Risk For Take Profit", minval=1.0, step=0.25, group="Accuracy")
+slBuffer     = input.float(0.2, "Stop Buffer Beyond Swing (x ATR)", minval=0.0, step=0.05, group="Accuracy")
+useOTE       = input.bool(true, "Limit Entry At 50% Of Signal Candle (else market at close)", group="Accuracy")
+showLevels   = input.bool(true, "Show Entry / SL / TP Levels", group="Accuracy")
 maxHold      = input.int(30, "Max Bars To Resolve Signal", minval=5, group="Accuracy")
 maxBoxes     = input.int(10, "Max Active Boxes Per Type", minval=1, maxval=25, group="Zones")
 
@@ -226,36 +228,93 @@ plotshape(stratBuy and not stratBuy[1], "Confluence Long", shape.labelup, locati
 plotshape(stratSell and not stratSell[1], "Confluence Short", shape.labeldown, location.abovebar, color.new(color.red, 0), text="SHORT", textcolor=color.white, size=size.small)
 bgcolor(useKillzone and inKillzone ? color.new(color.blue, 96) : na)
 plot(vwapV, "VWAP", color.new(color.yellow, 40))
-// ---- Live win-rate tracker (measures real accuracy on this chart) ----
+// ---- Entry / Stop / Take-profit planner + built-in backtest ----
+// Entry: limit at 50% of the signal candle (better price) or market at close.
+// Stop: beyond the recent 5-bar swing +/- ATR buffer.
+// TP1: nearest liquidity (recent swing high/low) if it gives >= minRR, else minRR. TP2: 1.5x TP1 distance.
+newLong = stratBuy and not stratBuy[1]
+newShort = stratSell and not stratSell[1]
 var int wins = 0
 var int losses = 0
+var float sumR = 0.0
+var float grossWin = 0.0
+var float grossLoss = 0.0
+var float equityR = 0.0
+var float peakR = 0.0
+var float maxDD = 0.0
 var int tDir = 0
+var int tState = 0 // 1 = pending limit, 2 = filled
 var float tEntry = na
 var float tStop = na
 var float tTarget = na
 var int tStart = na
+var line lnE = na
+var line lnS = na
+var line lnT = na
+
+float rRes = na
+
 if tDir != 0
-    hitT = tDir == 1 ? high >= tTarget : low <= tTarget
-    hitS = tDir == 1 ? low <= tStop : high >= tStop
-    if hitS
-        losses += 1
-        tDir := 0
-    else if hitT
+    line.set_x2(lnE, bar_index)
+    line.set_x2(lnS, bar_index)
+    line.set_x2(lnT, bar_index)
+    if tState == 1
+        if tDir == 1 ? low <= tEntry : high >= tEntry
+            tState := 2
+        else if bar_index - tStart >= 5
+            tDir := 0
+            tState := 0
+    if tState == 2 and tDir != 0
+        hitS = tDir == 1 ? low <= tStop : high >= tStop
+        hitT = tDir == 1 ? high >= tTarget : low <= tTarget
+        risk = math.abs(tEntry - tStop)
+        if hitS
+            rRes := -1.0
+        else if hitT
+            rRes := math.abs(tTarget - tEntry) / risk
+        else if bar_index - tStart >= maxHold
+            rRes := (close - tEntry) * tDir / risk
+
+if not na(rRes)
+    if rRes > 0
         wins += 1
-        tDir := 0
-    else if bar_index - tStart >= maxHold
+        grossWin += rRes
+    else
         losses += 1
-        tDir := 0
-newLong = stratBuy and not stratBuy[1]
-newShort = stratSell and not stratSell[1]
+        grossLoss += -rRes
+    sumR += rRes
+    equityR += rRes
+    peakR := math.max(peakR, equityR)
+    maxDD := math.max(maxDD, peakR - equityR)
+    tDir := 0
+    tState := 0
+
 if tDir == 0 and (newLong or newShort)
-    tDir := newLong ? 1 : -1
-    tEntry := close
-    tStop := close - tDir * atr * rrStop
-    tTarget := close + tDir * atr * rrTarget
-    tStart := bar_index
+    dir = newLong ? 1 : -1
+    ent = useOTE ? (high + low) / 2 : close
+    stp = dir == 1 ? ta.lowest(low, 5) - atr * slBuffer : ta.highest(high, 5) + atr * slBuffer
+    risk0 = math.abs(ent - stp)
+    liq = dir == 1 ? recentHigh : recentLow
+    liqRR = risk0 > 0 ? (liq - ent) * dir / risk0 : 0.0
+    tp = liqRR >= minRR ? liq : ent + dir * risk0 * minRR
+    if risk0 > 0 and risk0 < atr * 4
+        tDir := dir
+        tState := useOTE ? 1 : 2
+        tEntry := ent
+        tStop := stp
+        tTarget := tp
+        tStart := bar_index
+        if showLevels
+            lnE := line.new(bar_index, ent, bar_index, ent, color=color.new(color.white, 0), style=line.style_dashed)
+            lnS := line.new(bar_index, stp, bar_index, stp, color=color.red)
+            lnT := line.new(bar_index, tp, bar_index, tp, color=color.lime)
+            label.new(bar_index, tp, "TP " + str.tostring(tp, format.mintick) + " (" + str.tostring((tp - ent) * dir / risk0, "#.#") + "R)", style=label.style_label_left, color=color.new(color.green, 60), textcolor=color.white, size=size.tiny)
+            label.new(bar_index, ent, "ENTRY " + str.tostring(ent, format.mintick), style=label.style_label_left, color=color.new(color.gray, 40), textcolor=color.white, size=size.tiny)
+            label.new(bar_index, stp, "SL " + str.tostring(stp, format.mintick), style=label.style_label_left, color=color.new(color.red, 60), textcolor=color.white, size=size.tiny)
 totalTrades = wins + losses
 winRate = totalTrades > 0 ? wins * 100.0 / totalTrades : na
+profitFactor = grossLoss > 0 ? grossWin / grossLoss : na
+expectancy = totalTrades > 0 ? sumR / totalTrades : na
 
 alertcondition(stratBuy and not stratBuy[1], "Confluence Long", "Multi-strategy long")
 alertcondition(stratSell and not stratSell[1], "Confluence Short", "Multi-strategy short")
@@ -291,7 +350,7 @@ score += (openBullFVG ? 0.5 : 0) - (openBearFVG ? 0.5 : 0)
 confidence = math.min(math.abs(score) / 13.0 * 100, 100)
 prediction = score >= 2 ? "BULLISH" : score <= -2 ? "BEARISH" : "NEUTRAL"
 
-var table info = table.new(position.top_right, 2, 7, bgcolor=color.new(color.black, 20), border_width=1)
+var table info = table.new(position.top_right, 2, 11, bgcolor=color.new(color.black, 20), border_width=1)
 if showPredict and barstate.islast
     c = score >= 2 ? color.lime : score <= -2 ? color.red : color.gray
     table.cell(info, 0, 0, "Next Move", text_color=color.white)
@@ -312,8 +371,16 @@ if showPredict and barstate.islast
     table.cell(info, 1, 5, "Bull " + str.tostring(bullVotes) + " / Bear " + str.tostring(bearVotes), text_color=bullVotes > bearVotes ? color.lime : bearVotes > bullVotes ? color.red : color.gray)
 
 if showPredict and barstate.islast
-    table.cell(info, 0, 6, "Win Rate (live)", text_color=color.white)
-    table.cell(info, 1, 6, na(winRate) ? "n/a" : str.tostring(winRate, "#.#") + "% (" + str.tostring(totalTrades) + ")", text_color=na(winRate) ? color.gray : winRate >= 60 ? color.lime : color.orange)
+    table.cell(info, 0, 6, "Backtest Trades", text_color=color.white)
+    table.cell(info, 1, 6, str.tostring(totalTrades) + " (W" + str.tostring(wins) + "/L" + str.tostring(losses) + ")", text_color=color.white)
+    table.cell(info, 0, 7, "Win Rate", text_color=color.white)
+    table.cell(info, 1, 7, na(winRate) ? "n/a" : str.tostring(winRate, "#.#") + "%", text_color=na(winRate) ? color.gray : winRate >= 50 ? color.lime : color.orange)
+    table.cell(info, 0, 8, "Net R / Expectancy", text_color=color.white)
+    table.cell(info, 1, 8, str.tostring(sumR, "#.##") + "R / " + (na(expectancy) ? "n/a" : str.tostring(expectancy, "#.##") + "R"), text_color=sumR >= 0 ? color.lime : color.red)
+    table.cell(info, 0, 9, "Profit Factor", text_color=color.white)
+    table.cell(info, 1, 9, na(profitFactor) ? "n/a" : str.tostring(profitFactor, "#.##"), text_color=na(profitFactor) ? color.gray : profitFactor >= 1.5 ? color.lime : profitFactor >= 1 ? color.orange : color.red)
+    table.cell(info, 0, 10, "Max Drawdown", text_color=color.white)
+    table.cell(info, 1, 10, str.tostring(maxDD, "#.##") + "R", text_color=color.white)
 
 plot(emaFast, "EMA 21", color.new(color.aqua, 50))
 plot(emaSlow, "EMA 55", color.new(color.purple, 50))
