@@ -37,10 +37,10 @@ bearBalloon = bigVol and delta < 0
 fmt(v) => str.tostring(v, format.volume)
 
 if showBalloons and bullBalloon
-    label.new(bar_index, low, "▲ " + fmt(delta), style=label.style_label_up,
+    label.new(bar_index, low, "UP " + fmt(delta), style=label.style_label_up,
          color=color.new(color.green, 20), textcolor=color.white, size=size.small)
 if showBalloons and bearBalloon
-    label.new(bar_index, high, "▼ " + fmt(math.abs(delta)), style=label.style_label_down,
+    label.new(bar_index, high, "DN " + fmt(math.abs(delta)), style=label.style_label_down,
          color=color.new(color.red, 20), textcolor=color.white, size=size.small)
 
 // ---- Market structure ----
@@ -143,7 +143,7 @@ score += (inDemand ? 1.5 : 0) - (inSupply ? 1.5 : 0)
 score += (sweepLow ? 2.0 : 0) - (sweepHigh ? 2.0 : 0)
 score += (openBullFVG ? 0.5 : 0) - (openBearFVG ? 0.5 : 0)
 confidence = math.min(math.abs(score) / 9.0 * 100, 100)
-prediction = score >= 2 ? "BULLISH ▲" : score <= -2 ? "BEARISH ▼" : "NEUTRAL ◆"
+prediction = score >= 2 ? "BULLISH" : score <= -2 ? "BEARISH" : "NEUTRAL"
 
 var table info = table.new(position.top_right, 2, 4, bgcolor=color.new(color.black, 20), border_width=1)
 if showPredict and barstate.islast
@@ -151,7 +151,7 @@ if showPredict and barstate.islast
     table.cell(info, 0, 0, "Next Move", text_color=color.white)
     table.cell(info, 1, 0, prediction, text_color=c)
     table.cell(info, 0, 1, "Confidence", text_color=color.white)
-    table.cell(info, 1, 1, str.tostring(confidence, "#") + "%", text_color=c)
+    table.cell(info, 1, 1, str.tostring(confidence, "#.##") + "%", text_color=c)
     table.cell(info, 0, 2, "Structure", text_color=color.white)
     table.cell(info, 1, 2, trend == 1 ? "Bullish" : trend == -1 ? "Bearish" : "None", text_color=color.white)
     table.cell(info, 0, 3, "Delta (est.)", text_color=color.white)
