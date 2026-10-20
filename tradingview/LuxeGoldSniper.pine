@@ -99,8 +99,7 @@ plot(showEMA ? emaS : na, "EMA Slow", color=color.new(color.teal, 0), linewidth=
 
 // Consolidation: tight recent range relative to ATR
 rng = ta.highest(high, consLen) - ta.lowest(low, consLen)
-consolidating = rng / math.max(atr, syminfo.mintick) < consLen * consThr * 0.25 + 1.0 and
-                math.abs(emaF - emaS) < atr * 0.15
+consolidating = rng / math.max(atr, syminfo.mintick) < consLen * consThr * 0.25 + 1.0 and math.abs(emaF - emaS) < atr * 0.15
 trending = not consolidating
 bullTrend = emaF > emaS and close > emaS
 bearTrend = emaF < emaS and close < emaS
