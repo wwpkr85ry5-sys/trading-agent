@@ -1,0 +1,505 @@
+//@version=5
+indicator("Luxe Gold Sniper", overlay=true, max_boxes_count=200, max_lines_count=200, max_labels_count=200)
+
+// ============================================================================
+// LUXE GOLD SNIPER
+// Buy/Sell/Re-entry signals with Entry, SL, TP1-TP4, supply & demand zones,
+// BOS/CHOCH, FVGs, order blocks, liquidity sweeps, previous day/week/month
+// levels, 9/21 EMAs, sessions, opening ranges and a trend/context dashboard.
+// ============================================================================
+
+// ---------------------------------------------------------------- Inputs ----
+var G_MKT = "Market"
+mkt = input.string("Auto", "Market Preset", options=["Auto", "Gold", "NAS100", "NQ", "US30", "S&P 500", "MES", "QQQ", "Silver", "Oil", "DXY", "Custom"], group=G_MKT)
+cSL  = input.float(100.0, "Custom SL (pts)",  minval=0.0001, group=G_MKT)
+cTP1 = input.float(50.0,  "Custom TP1 (pts)", minval=0.0001, group=G_MKT)
+cTP2 = input.float(150.0, "Custom TP2 (pts)", minval=0.0001, group=G_MKT)
+cTP3 = input.float(300.0, "Custom TP3 (pts)", minval=0.0001, group=G_MKT)
+
+var G_SIG = "Signals"
+fastLen    = input.int(9,  "Fast EMA", minval=1, group=G_SIG)
+slowLen    = input.int(21, "Slow EMA", minval=2, group=G_SIG)
+showSig    = input.bool(true, "Show Buy / Sell Signals", group=G_SIG)
+showReEnt  = input.bool(true, "Show Re-Entry Signals",   group=G_SIG)
+showTrade  = input.bool(true, "Show Entry / SL / TP Levels", group=G_SIG)
+showEMA    = input.bool(true, "Show 9 & 21 EMAs", group=G_SIG)
+filterCons = input.bool(false, "Filter Signals During Consolidation", group=G_SIG)
+consLen    = input.int(20, "Consolidation Lookback", minval=5, group=G_SIG)
+consThr    = input.float(0.6, "Consolidation Threshold (range / ATR)", minval=0.1, step=0.1, group=G_SIG)
+
+var G_SD = "Supply & Demand (5M)"
+showSD   = input.bool(true, "Show 5M Supply & Demand Zones", group=G_SD)
+sdSwing  = input.int(5, "Swing Strength (5M bars)", minval=2, group=G_SD)
+sdMax    = input.int(3, "Max Zones Per Side", minval=1, maxval=10, group=G_SD)
+
+var G_SMC = "Smart Money Concepts"
+showBOS   = input.bool(true, "Show BOS / CHOCH", group=G_SMC)
+showFVG   = input.bool(true, "Show Fair Value Gaps", group=G_SMC)
+showOB    = input.bool(true, "Show Order Blocks", group=G_SMC)
+showLiq   = input.bool(true, "Show Liquidity & Sweeps", group=G_SMC)
+swingLen  = input.int(5, "Structure Swing Length", minval=2, group=G_SMC)
+fvgMinAtr = input.float(0.1, "Min FVG Size (x ATR)", minval=0.0, step=0.05, group=G_SMC)
+maxBoxes  = input.int(5, "Max FVG / OB Boxes Per Type", minval=1, maxval=20, group=G_SMC)
+
+var G_LVL = "Previous Highs & Lows"
+showPD = input.bool(true, "Previous Day H/L",   group=G_LVL)
+showPW = input.bool(true, "Previous Week H/L",  group=G_LVL)
+showPM = input.bool(false, "Previous Month H/L", group=G_LVL)
+
+var G_SES = "Sessions"
+showSes  = input.bool(true, "Show Market Sessions", group=G_SES)
+showSesHL = input.bool(true, "Show Session Highs & Lows", group=G_SES)
+showOR   = input.bool(false, "Show Opening Range", group=G_SES)
+orMins   = input.int(15, "Opening Range Minutes", minval=1, group=G_SES)
+sesSydney = input.session("1700-0200", "Sydney", group=G_SES)
+sesTokyo  = input.session("1900-0400", "Tokyo",  group=G_SES)
+sesChina  = input.session("2030-0430", "China",  group=G_SES)
+sesLondon = input.session("0300-1200", "London", group=G_SES)
+sesNY     = input.session("0800-1700", "New York", group=G_SES)
+sesTz     = input.string("America/New_York", "Session Timezone", group=G_SES)
+
+var G_DASH = "Dashboard"
+showDash = input.bool(true, "Show Dashboard", group=G_DASH)
+dashPos  = input.string("Top Right", "Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group=G_DASH)
+
+// ----------------------------------------------------------- Market preset --
+tick = syminfo.ticker
+autoMkt = str.contains(tick, "XAU") or str.contains(tick, "GOLD") or str.contains(tick, "GC") ? "Gold" :
+          str.contains(tick, "NAS100") or str.contains(tick, "US100") or str.contains(tick, "USTEC") ? "NAS100" :
+          str.contains(tick, "NQ") ? "NQ" :
+          str.contains(tick, "US30") or str.contains(tick, "DJI") ? "US30" :
+          str.contains(tick, "MES") ? "MES" :
+          str.contains(tick, "SPX") or str.contains(tick, "US500") or str.contains(tick, "ES") ? "S&P 500" :
+          str.contains(tick, "QQQ") ? "QQQ" :
+          str.contains(tick, "XAG") or str.contains(tick, "SILVER") or str.contains(tick, "SI") ? "Silver" :
+          str.contains(tick, "OIL") or str.contains(tick, "WTI") or str.contains(tick, "CL") ? "Oil" :
+          str.contains(tick, "DXY") ? "DXY" : "Custom"
+m = mkt == "Auto" ? autoMkt : mkt
+
+// [SL, TP1, TP2, TP3] in price points
+[slPts, tp1Pts, tp2Pts, tp3Pts] = switch m
+    "Gold"    => [10.0, 5.0, 15.0, 30.0]
+    "NAS100"  => [100.0, 50.0, 150.0, 300.0]
+    "NQ"      => [100.0, 50.0, 150.0, 300.0]
+    "US30"    => [150.0, 75.0, 225.0, 450.0]
+    "S&P 500" => [25.0, 12.5, 37.5, 75.0]
+    "MES"     => [25.0, 12.5, 37.5, 75.0]
+    "QQQ"     => [2.0, 1.0, 3.0, 6.0]
+    "Silver"  => [0.5, 0.25, 0.75, 1.5]
+    "Oil"     => [1.0, 0.5, 1.5, 3.0]
+    "DXY"     => [0.5, 0.25, 0.75, 1.5]
+    => [cSL, cTP1, cTP2, cTP3]
+
+// ------------------------------------------------------------ Indicators ----
+emaF = ta.ema(close, fastLen)
+emaS = ta.ema(close, slowLen)
+atr  = ta.atr(14)
+plot(showEMA ? emaF : na, "EMA Fast", color=color.new(color.yellow, 0), linewidth=2)
+plot(showEMA ? emaS : na, "EMA Slow", color=color.new(color.teal, 0), linewidth=2)
+
+// Consolidation: tight recent range relative to ATR
+rng = ta.highest(high, consLen) - ta.lowest(low, consLen)
+consolidating = rng / math.max(atr, syminfo.mintick) < consLen * consThr * 0.25 + 1.0 and
+                math.abs(emaF - emaS) < atr * 0.15
+trending = not consolidating
+bullTrend = emaF > emaS and close > emaS
+bearTrend = emaF < emaS and close < emaS
+
+// ----------------------------------------------------------- Trade engine ---
+var int dir = 0              // 1 long, -1 short, 0 flat
+var float entry = na
+var float sl = na
+var float tp1 = na
+var float tp2 = na
+var float tp3 = na
+var bool h1 = false
+var bool h2 = false
+var bool h3 = false
+var int entryBar = na
+var bool slHit = false
+
+sigOk = not (filterCons and consolidating)
+
+rawBuy  = ta.crossover(emaF, emaS) and close > emaS
+rawSell = ta.crossunder(emaF, emaS) and close < emaS
+// Re-entry: pullback to slow EMA inside an existing trend, then close back with the trend
+reBuy  = bullTrend and low <= emaS and close > emaF and close > open and dir != 1
+reSell = bearTrend and high >= emaS and close < emaF and close < open and dir != -1
+
+buySig  = sigOk and rawBuy
+sellSig = sigOk and rawSell
+reBuySig  = showReEnt and sigOk and reBuy  and not buySig and bar_index - nz(entryBar, -999) > 5
+reSellSig = showReEnt and sigOk and reSell and not sellSig and bar_index - nz(entryBar, -999) > 5
+
+newLong  = barstate.isconfirmed and (buySig or reBuySig)
+newShort = barstate.isconfirmed and (sellSig or reSellSig)
+
+// Manage the active trade (before opening a new one so a reversal closes the old one)
+if dir == 1
+    if not h1 and high >= tp1
+        h1 := true
+    if not h2 and high >= tp2
+        h2 := true
+    if not h3 and high >= tp3
+        h3 := true
+    if low <= sl
+        slHit := not h1
+        dir := 0
+if dir == -1
+    if not h1 and low <= tp1
+        h1 := true
+    if not h2 and low <= tp2
+        h2 := true
+    if not h3 and low <= tp3
+        h3 := true
+    if high >= sl
+        slHit := not h1
+        dir := 0
+
+openTrade(d) =>
+    dir := d
+    entry := close
+    sl := close - d * slPts
+    tp1 := close + d * tp1Pts
+    tp2 := close + d * tp2Pts
+    tp3 := close + d * tp3Pts
+    h1 := false
+    h2 := false
+    h3 := false
+    slHit := false
+    entryBar := bar_index
+
+isReBuy = newLong and not buySig
+isReSell = newShort and not sellSig
+if newLong
+    openTrade(1)
+if newShort
+    openTrade(-1)
+
+plotshape(showSig and newLong and not isReBuy, "Buy", shape.labelup, location.belowbar, color.new(color.green, 0), text="BUY", textcolor=color.white, size=size.small)
+plotshape(showSig and newShort and not isReSell, "Sell", shape.labeldown, location.abovebar, color.new(color.red, 0), text="SELL", textcolor=color.white, size=size.small)
+plotshape(showSig and isReBuy, "Re-Buy", shape.labelup, location.belowbar, color.new(color.orange, 0), text="RE-BUY", textcolor=color.white, size=size.small)
+plotshape(showSig and isReSell, "Re-Sell", shape.labeldown, location.abovebar, color.new(color.orange, 0), text="RE-SELL", textcolor=color.white, size=size.small)
+
+// Trade level drawings
+var line lnEntry = na
+var line lnSL = na
+var line lnTP1 = na
+var line lnTP2 = na
+var line lnTP3 = na
+var label lbEntry = na
+var label lbSL = na
+var label lbTP1 = na
+var label lbTP2 = na
+var label lbTP3 = na
+var box bxRisk = na
+var box bxReward = na
+
+lvlLine(ln, y, c, st) =>
+    line.new(bar_index, y, bar_index + 1, y, color=c, style=st, extend=extend.none)
+
+lvlLabel(y, txt, bg) =>
+    label.new(bar_index + 1, y, txt, style=label.style_label_left, color=bg, textcolor=color.white, size=size.small)
+
+if showTrade
+    if newLong or newShort
+        side = newLong ? "BUY" : "SELL"
+        bxRisk := box.new(bar_index, math.max(entry, sl), bar_index + 1, math.min(entry, sl), border_color=color.new(color.red, 100), bgcolor=color.new(color.red, 85))
+        bxReward := box.new(bar_index, math.max(entry, tp3), bar_index + 1, math.min(entry, tp3), border_color=color.new(color.green, 100), bgcolor=color.new(color.green, 88))
+        lnEntry := lvlLine(lnEntry, entry, color.orange, line.style_solid)
+        lnSL  := lvlLine(lnSL, sl,  color.red,   line.style_solid)
+        lnTP1 := lvlLine(lnTP1, tp1, color.green, line.style_dotted)
+        lnTP2 := lvlLine(lnTP2, tp2, color.green, line.style_dotted)
+        lnTP3 := lvlLine(lnTP3, tp3, color.green, line.style_dotted)
+        lbEntry := lvlLabel(entry, side + " ENTRY " + str.tostring(entry, format.mintick), color.orange)
+        lbSL  := lvlLabel(sl,  "SL " + str.tostring(slPts) + " PTS " + str.tostring(sl, format.mintick), color.red)
+        lbTP1 := lvlLabel(tp1, "TP1 " + str.tostring(tp1Pts) + " PTS " + str.tostring(tp1, format.mintick), color.green)
+        lbTP2 := lvlLabel(tp2, "TP2 " + str.tostring(tp2Pts) + " PTS " + str.tostring(tp2, format.mintick), color.green)
+        lbTP3 := lvlLabel(tp3, "TP3 " + str.tostring(tp3Pts) + " PTS " + str.tostring(tp3, format.mintick), color.green)
+    else if not na(lnEntry)
+        active = dir != 0
+        // extend lines/boxes while the trade is active; freeze once closed
+        if active or bar_index == entryBar
+            for l in array.from(lnEntry, lnSL, lnTP1, lnTP2, lnTP3)
+                line.set_x2(l, bar_index + 1)
+            box.set_right(bxRisk, bar_index + 1)
+            box.set_right(bxReward, bar_index + 1)
+            for lb in array.from(lbEntry, lbSL, lbTP1, lbTP2, lbTP3)
+                label.set_x(lb, bar_index + 1)
+        if h1
+            label.set_text(lbTP1, "TP1 HIT ✓ " + str.tostring(tp1Pts) + " PTS " + str.tostring(tp1, format.mintick))
+        if h2
+            label.set_text(lbTP2, "TP2 HIT ✓ " + str.tostring(tp2Pts) + " PTS " + str.tostring(tp2, format.mintick))
+        if h3
+            label.set_text(lbTP3, "TP3 HIT ✓ " + str.tostring(tp3Pts) + " PTS " + str.tostring(tp3, format.mintick))
+
+// ------------------------------------------------- 5M Supply & Demand -------
+// Zones come from 5-minute swing highs/lows; tests count touches by price.
+type Zone
+    float top
+    float bot
+    int   tests
+    bool  inside
+    box   bx
+    label lb
+
+var array<Zone> supply = array.new<Zone>()
+var array<Zone> demand = array.new<Zone>()
+
+f5m() =>
+    ph = ta.pivothigh(high, sdSwing, sdSwing)
+    pl = ta.pivotlow(low, sdSwing, sdSwing)
+    [ph, pl, math.max(open, close)[sdSwing], math.min(open, close)[sdSwing]]
+
+[ph5, pl5, ph5Body, pl5Body] = request.security(syminfo.tickerid, "5", f5m(), lookahead=barmerge.lookahead_off)
+
+newZone(arr, t, b, isSupply) =>
+    c = isSupply ? color.red : color.green
+    bx = box.new(bar_index, t, bar_index + 1, b, border_color=c, bgcolor=color.new(c, 88), extend=extend.right)
+    lb = label.new(bar_index, (t + b) / 2, "", style=label.style_none, textcolor=c, size=size.small)
+    array.push(arr, Zone.new(t, b, 0, false, bx, lb))
+    if array.size(arr) > sdMax
+        old = array.shift(arr)
+        box.delete(old.bx)
+        label.delete(old.lb)
+
+if showSD
+    if not na(ph5)
+        // supply zone: upper wick region of the swing high
+        newZone(supply, ph5, ph5Body, true)
+    if not na(pl5)
+        newZone(demand, pl5Body, pl5, false)
+
+updateZones(arr, isSupply) =>
+    if array.size(arr) > 0
+        for i = array.size(arr) - 1 to 0
+            z = array.get(arr, i)
+            broken = isSupply ? close > z.top : close < z.bot
+            if broken
+                box.delete(z.bx)
+                label.delete(z.lb)
+                array.remove(arr, i)
+            else
+                touching = isSupply ? high >= z.bot : low <= z.top
+                if touching and not z.inside
+                    z.tests += 1
+                z.inside := touching
+                box.set_right(z.bx, bar_index)
+                label.set_x(z.lb, bar_index)
+                label.set_text(z.lb, (isSupply ? "5M SUPPLY" : "5M DEMAND") + " | TESTS " + str.tostring(z.tests))
+
+if showSD
+    updateZones(supply, true)
+    updateZones(demand, false)
+
+// ------------------------------------------------------ BOS / CHOCH ---------
+var float lastSH = na
+var float lastSL = na
+var int   lastSHbar = na
+var int   lastSLbar = na
+var bool  shBroken = true
+var bool  slBroken = true
+var int   structure = 0   // 1 bullish, -1 bearish
+
+pH = ta.pivothigh(high, swingLen, swingLen)
+pL = ta.pivotlow(low, swingLen, swingLen)
+if not na(pH)
+    lastSH := pH
+    lastSHbar := bar_index - swingLen
+    shBroken := false
+if not na(pL)
+    lastSL := pL
+    lastSLbar := bar_index - swingLen
+    slBroken := false
+
+bullBreak = not shBroken and not na(lastSH) and close > lastSH
+bearBreak = not slBroken and not na(lastSL) and close < lastSL
+
+if bullBreak
+    kind = structure == -1 ? "CHOCH" : "BOS"
+    if showBOS
+        line.new(lastSHbar, lastSH, bar_index, lastSH, color=color.green, style=line.style_dashed)
+        label.new(int(math.avg(lastSHbar, bar_index)), lastSH, kind, style=label.style_label_down, color=color.new(color.green, 100), textcolor=color.green, size=size.tiny)
+    shBroken := true
+    structure := 1
+if bearBreak
+    kind = structure == 1 ? "CHOCH" : "BOS"
+    if showBOS
+        line.new(lastSLbar, lastSL, bar_index, lastSL, color=color.red, style=line.style_dashed)
+        label.new(int(math.avg(lastSLbar, bar_index)), lastSL, kind, style=label.style_label_up, color=color.new(color.red, 100), textcolor=color.red, size=size.tiny)
+    slBroken := true
+    structure := -1
+
+// ------------------------------------------------- Fair Value Gaps ----------
+var array<box> fvgBull = array.new<box>()
+var array<box> fvgBear = array.new<box>()
+
+pruneBoxes(arr, bull) =>
+    if array.size(arr) > 0
+        for i = array.size(arr) - 1 to 0
+            b = array.get(arr, i)
+            filled = bull ? close < box.get_bottom(b) : close > box.get_top(b)
+            if filled
+                box.delete(b)
+                array.remove(arr, i)
+            else
+                box.set_right(b, bar_index)
+
+if showFVG and barstate.isconfirmed
+    if low > high[2] and low - high[2] > atr * fvgMinAtr
+        array.push(fvgBull, box.new(bar_index - 2, low, bar_index, high[2], border_color=color.new(color.green, 100), bgcolor=color.new(color.green, 82), text="FVG", text_color=color.green, text_size=size.tiny))
+        if array.size(fvgBull) > maxBoxes
+            box.delete(array.shift(fvgBull))
+    if high < low[2] and low[2] - high > atr * fvgMinAtr
+        array.push(fvgBear, box.new(bar_index - 2, low[2], bar_index, high, border_color=color.new(color.red, 100), bgcolor=color.new(color.red, 82), text="FVG", text_color=color.red, text_size=size.tiny))
+        if array.size(fvgBear) > maxBoxes
+            box.delete(array.shift(fvgBear))
+if showFVG
+    pruneBoxes(fvgBull, true)
+    pruneBoxes(fvgBear, false)
+
+// ------------------------------------------------------- Order Blocks -------
+var array<box> obBull = array.new<box>()
+var array<box> obBear = array.new<box>()
+
+if showOB and (bullBreak or bearBreak)
+    if bullBreak
+        // last down candle before the break
+        for i = 1 to 30
+            if close[i] < open[i]
+                array.push(obBull, box.new(bar_index - i, high[i], bar_index, low[i], border_color=color.blue, bgcolor=color.new(color.blue, 85), text="BULL OB", text_color=color.blue, text_size=size.tiny))
+                break
+        if array.size(obBull) > maxBoxes
+            box.delete(array.shift(obBull))
+    if bearBreak
+        for i = 1 to 30
+            if close[i] > open[i]
+                array.push(obBear, box.new(bar_index - i, high[i], bar_index, low[i], border_color=color.purple, bgcolor=color.new(color.purple, 85), text="BEAR OB", text_color=color.purple, text_size=size.tiny))
+                break
+        if array.size(obBear) > maxBoxes
+            box.delete(array.shift(obBear))
+if showOB
+    pruneBoxes(obBull, true)
+    pruneBoxes(obBear, false)
+
+// ---------------------------------------- Liquidity & sweeps ----------------
+var float bsl = na   // buy-side liquidity (swing high)
+var float ssl = na   // sell-side liquidity (swing low)
+if not na(pH)
+    bsl := pH
+if not na(pL)
+    ssl := pL
+sweepHigh = showLiq and not na(bsl) and high > bsl and close < bsl
+sweepLow  = showLiq and not na(ssl) and low < ssl and close > ssl
+plotshape(sweepHigh, "BSL Sweep", shape.xcross, location.abovebar, color.new(color.fuchsia, 0), size=size.tiny, text="BSL swept", textcolor=color.fuchsia)
+plotshape(sweepLow, "SSL Sweep", shape.xcross, location.belowbar, color.new(color.aqua, 0), size=size.tiny, text="SSL swept", textcolor=color.aqua)
+if sweepHigh
+    bsl := na
+if sweepLow
+    ssl := na
+plot(showLiq ? bsl : na, "Buy-Side Liquidity", color=color.new(color.fuchsia, 50), style=plot.style_linebr)
+plot(showLiq ? ssl : na, "Sell-Side Liquidity", color=color.new(color.aqua, 50), style=plot.style_linebr)
+
+// ------------------------------------------- Previous day/week/month --------
+[pdh, pdl] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead=barmerge.lookahead_on)
+[pwh, pwl] = request.security(syminfo.tickerid, "W", [high[1], low[1]], lookahead=barmerge.lookahead_on)
+[pmh, pml] = request.security(syminfo.tickerid, "M", [high[1], low[1]], lookahead=barmerge.lookahead_on)
+plot(showPD ? pdh : na, "PDH", color=color.new(color.orange, 20), style=plot.style_linebr)
+plot(showPD ? pdl : na, "PDL", color=color.new(color.orange, 20), style=plot.style_linebr)
+plot(showPW ? pwh : na, "PWH", color=color.new(color.aqua, 20), style=plot.style_linebr)
+plot(showPW ? pwl : na, "PWL", color=color.new(color.aqua, 20), style=plot.style_linebr)
+plot(showPM ? pmh : na, "PMH", color=color.new(color.white, 30), style=plot.style_linebr)
+plot(showPM ? pml : na, "PML", color=color.new(color.white, 30), style=plot.style_linebr)
+
+lvlTag(show, y, txt, c) =>
+    if show and barstate.islast and not na(y)
+        label.new(bar_index, y, txt, style=label.style_label_left, color=c, textcolor=color.white, size=size.small)
+
+lvlTag(showPD, pdh, "PDH", color.orange)
+lvlTag(showPD, pdl, "PDL", color.orange)
+lvlTag(showPW, pwh, "PREVIOUS WEEK HIGH", color.new(color.aqua, 20))
+lvlTag(showPW, pwl, "PREVIOUS WEEK LOW", color.new(color.aqua, 20))
+lvlTag(showPM, pmh, "PMH", color.gray)
+lvlTag(showPM, pml, "PML", color.gray)
+
+// ------------------------------------------------------------ Sessions ------
+inSes(s) => not na(time(timeframe.period, s, sesTz))
+
+sydney = inSes(sesSydney)
+tokyo  = inSes(sesTokyo)
+china  = inSes(sesChina)
+london = inSes(sesLondon)
+ny     = inSes(sesNY)
+
+bgcolor(showSes and london ? color.new(color.purple, 94) : na, title="London")
+bgcolor(showSes and ny ? color.new(color.blue, 94) : na, title="New York")
+bgcolor(showSes and tokyo and not london ? color.new(color.red, 95) : na, title="Tokyo")
+
+var float lonHi = na
+var float lonLo = na
+var float nyHi = na
+var float nyLo = na
+if london and not london[1]
+    lonHi := high
+    lonLo := low
+else if london
+    lonHi := math.max(lonHi, high)
+    lonLo := math.min(lonLo, low)
+if ny and not ny[1]
+    nyHi := high
+    nyLo := low
+else if ny
+    nyHi := math.max(nyHi, high)
+    nyLo := math.min(nyLo, low)
+plot(showSesHL and london ? lonHi : na, "London High", color=color.new(color.purple, 30), style=plot.style_linebr)
+plot(showSesHL and london ? lonLo : na, "London Low", color=color.new(color.purple, 30), style=plot.style_linebr)
+plot(showSesHL and ny ? nyHi : na, "NY High", color=color.new(color.blue, 30), style=plot.style_linebr)
+plot(showSesHL and ny ? nyLo : na, "NY Low", color=color.new(color.blue, 30), style=plot.style_linebr)
+
+// Opening range (first N minutes of the New York session)
+var float orHi = na
+var float orLo = na
+nyStart = ny and not ny[1]
+minsSinceOpen = ny ? (time - ta.valuewhen(nyStart, time, 0)) / 60000 : na
+if nyStart
+    orHi := high
+    orLo := low
+else if ny and minsSinceOpen < orMins
+    orHi := math.max(orHi, high)
+    orLo := math.min(orLo, low)
+plot(showOR and ny ? orHi : na, "OR High", color=color.new(color.yellow, 40), style=plot.style_linebr)
+plot(showOR and ny ? orLo : na, "OR Low", color=color.new(color.yellow, 40), style=plot.style_linebr)
+
+// ----------------------------------------------------------- Dashboard ------
+dpos = switch dashPos
+    "Top Left" => position.top_left
+    "Bottom Right" => position.bottom_right
+    "Bottom Left" => position.bottom_left
+    => position.top_right
+
+var table dash = table.new(dpos, 2, 10, border_width=1, border_color=color.gray, frame_color=color.gray, frame_width=1)
+cell(r, k, v, vc) =>
+    table.cell(dash, 0, r, k, text_color=color.black, bgcolor=color.white, text_size=size.small)
+    table.cell(dash, 1, r, v, text_color=vc, bgcolor=color.white, text_size=size.small)
+
+fmt(x) => str.tostring(x, format.mintick)
+
+if showDash and barstate.islast
+    table.cell(dash, 0, 0, "LUXE", text_color=color.white, bgcolor=color.new(color.gray, 20), text_size=size.small)
+    table.cell(dash, 1, 0, "GOLD SNIPER", text_color=color.white, bgcolor=color.new(color.gray, 20), text_size=size.small)
+    cell(1, "Market", consolidating ? "RANGING" : "TRENDING", consolidating ? color.orange : color.green)
+    cell(2, "Trend", bullTrend ? "BULLISH" : bearTrend ? "BEARISH" : "NEUTRAL", bullTrend ? color.green : bearTrend ? color.red : color.gray)
+    statusTxt = dir == 1 ? "LONG ACTIVE" : dir == -1 ? "SHORT ACTIVE" : slHit ? "STOPPED OUT" : "WAITING"
+    cell(3, "Status", statusTxt, dir == 1 ? color.green : dir == -1 ? color.red : color.gray)
+    active = dir != 0 or not na(entry)
+    cell(4, "Entry", active ? fmt(entry) : "-", color.black)
+    cell(5, "SL", active ? fmt(sl) : "-", color.red)
+    cell(6, "TP1", active ? (h1 ? "HIT ✓ " : "") + fmt(tp1) : "-", h1 ? color.green : color.black)
+    cell(7, "TP2", active ? (h2 ? "HIT ✓ " : "") + fmt(tp2) : "-", h2 ? color.green : color.black)
+    cell(8, "TP3", active ? (h3 ? "HIT ✓ " : "") + fmt(tp3) : "-", h3 ? color.green : color.black)
+    cell(9, "TP4", dir != 0 ? "OPEN RUNNER" : "-", dir != 0 ? color.green : color.black)
+
+// ------------------------------------------------------------ Alerts --------
+alertcondition(newLong and not isReBuy,  "Buy Signal",     "Luxe Gold Sniper: BUY {{ticker}}")
+alertcondition(newShort and not isReSell, "Sell Signal",   "Luxe Gold Sniper: SELL {{ticker}}")
+alertcondition(isReBuy or isReSell,      "Re-Entry Signal", "Luxe Gold Sniper: RE-ENTRY {{ticker}}")
