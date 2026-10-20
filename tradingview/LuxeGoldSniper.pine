@@ -270,9 +270,9 @@ updateZones(arr, isSupply) =>
             z = array.get(arr, i)
             broken = isSupply ? close > z.top : close < z.bot
             if broken
+                array.remove(arr, i)
                 box.delete(z.bx)
                 label.delete(z.lb)
-                array.remove(arr, i)
             else
                 touching = isSupply ? high >= z.bot : low <= z.top
                 if touching and not z.inside
@@ -334,8 +334,8 @@ pruneBoxes(arr, bull) =>
             b = array.get(arr, i)
             filled = bull ? close < box.get_bottom(b) : close > box.get_top(b)
             if filled
-                box.delete(b)
                 array.remove(arr, i)
+                box.delete(b)
             else
                 box.set_right(b, bar_index)
 
