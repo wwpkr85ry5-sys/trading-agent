@@ -155,25 +155,20 @@ if dir == -1
         slHit := not h1
         dir := 0
 
-openTrade(d) =>
-    dir := d
+isReBuy = newLong and not buySig
+isReSell = newShort and not sellSig
+if newLong or newShort
+    dir := newLong ? 1 : -1
     entry := close
-    sl := close - d * slPts
-    tp1 := close + d * tp1Pts
-    tp2 := close + d * tp2Pts
-    tp3 := close + d * tp3Pts
+    sl := close - dir * slPts
+    tp1 := close + dir * tp1Pts
+    tp2 := close + dir * tp2Pts
+    tp3 := close + dir * tp3Pts
     h1 := false
     h2 := false
     h3 := false
     slHit := false
     entryBar := bar_index
-
-isReBuy = newLong and not buySig
-isReSell = newShort and not sellSig
-if newLong
-    openTrade(1)
-if newShort
-    openTrade(-1)
 
 plotshape(showSig and newLong and not isReBuy, "Buy", shape.labelup, location.belowbar, color.new(color.green, 0), text="BUY", textcolor=color.white, size=size.small)
 plotshape(showSig and newShort and not isReSell, "Sell", shape.labeldown, location.abovebar, color.new(color.red, 0), text="SELL", textcolor=color.white, size=size.small)
