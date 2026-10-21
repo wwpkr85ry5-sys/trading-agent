@@ -42,6 +42,16 @@ swingLen  = input.int(5, "Structure Swing Length", minval=2, group=G_SMC)
 fvgMinAtr = input.float(0.1, "Min FVG Size (x ATR)", minval=0.0, step=0.05, group=G_SMC)
 maxBoxes  = input.int(5, "Max FVG / OB Boxes Per Type", minval=1, maxval=20, group=G_SMC)
 
+var G_BIG = "Smart Money / Big Money"
+showBig   = input.bool(true, "Mark Smart Money Zones (institutional footprints)", group=G_BIG)
+bigVolMult = input.float(1.8, "Volume Spike (x 20-bar avg)", minval=1.0, step=0.1, group=G_BIG)
+bigBodyAtr = input.float(1.2, "Displacement Body (x ATR)", minval=0.5, step=0.1, group=G_BIG)
+bigMax    = input.int(4, "Max Smart Money Zones Per Side", minval=1, maxval=15, group=G_BIG)
+showEQ    = input.bool(true, "Mark Equal Highs / Lows (resting liquidity)", group=G_BIG)
+eqTol     = input.float(0.1, "Equal Level Tolerance (x ATR)", minval=0.01, step=0.01, group=G_BIG)
+showPD2   = input.bool(true, "Show Premium / Discount Equilibrium", group=G_BIG)
+pdLen     = input.int(50, "Premium / Discount Range Lookback", minval=10, group=G_BIG)
+
 var G_LVL = "Previous Highs & Lows"
 showPD = input.bool(true, "Previous Day H/L",   group=G_LVL)
 showPW = input.bool(true, "Previous Week H/L",  group=G_LVL)
@@ -464,6 +474,68 @@ else if ny and minsSinceOpen < orMins
     orLo := math.min(orLo, low)
 plot(showOR and ny ? orHi : na, "OR High", color=color.new(color.yellow, 40), style=plot.style_linebr)
 plot(showOR and ny ? orLo : na, "OR Low", color=color.new(color.yellow, 40), style=plot.style_linebr)
+
+// ------------------------------------------- Smart / Big Money zones --------
+// Institutional footprint: displacement candle (big body) on a volume spike.
+// The zone is the last opposite candle before it (where big orders sat) and
+// is extended right until price closes through it (mitigated).
+var array<box> bigBuy = array.new<box>()
+var array<box> bigSell = array.new<box>()
+
+avgVol = ta.sma(volume, 20)
+volSpike = volume > avgVol * bigVolMult and avgVol > 0
+bodyNow = math.abs(close - open)
+bigUp = volSpike and close > open and bodyNow > atr * bigBodyAtr
+bigDn = volSpike and close < open and bodyNow > atr * bigBodyAtr
+
+if showBig and barstate.isconfirmed
+    if bigUp
+        for i = 1 to 10
+            if close[i] < open[i]
+                array.push(bigBuy, box.new(bar_index - i, high[i], bar_index, low[i], border_color=color.new(color.lime, 0), bgcolor=color.new(color.lime, 80), text="SMART $ BUY", text_color=color.lime, text_size=size.tiny))
+                break
+        if array.size(bigBuy) > bigMax
+            box.delete(array.shift(bigBuy))
+    if bigDn
+        for i = 1 to 10
+            if close[i] > open[i]
+                array.push(bigSell, box.new(bar_index - i, high[i], bar_index, low[i], border_color=color.new(color.maroon, 0), bgcolor=color.new(color.red, 78), text="SMART $ SELL", text_color=color.red, text_size=size.tiny))
+                break
+        if array.size(bigSell) > bigMax
+            box.delete(array.shift(bigSell))
+if showBig
+    pruneBoxes(bigBuy, true)
+    pruneBoxes(bigSell, false)
+plotshape(showBig and bigUp, "Big Money Buy", shape.diamond, location.belowbar, color.new(color.lime, 0), size=size.tiny)
+plotshape(showBig and bigDn, "Big Money Sell", shape.diamond, location.abovebar, color.new(color.red, 0), size=size.tiny)
+
+// Equal highs / lows: stop orders cluster here and big money targets them
+var float eqHiLvl = na
+var float eqLoLvl = na
+var float prevPH = na
+var float prevPL = na
+eqHi = false
+eqLo = false
+if not na(pH)
+    eqHi := not na(prevPH) and math.abs(pH - prevPH) < atr * eqTol
+    prevPH := pH
+if not na(pL)
+    eqLo := not na(prevPL) and math.abs(pL - prevPL) < atr * eqTol
+    prevPL := pL
+if showEQ and eqHi
+    line.new(bar_index - swingLen, pH, bar_index, pH, color=color.fuchsia, style=line.style_dotted, extend=extend.right)
+    label.new(bar_index - swingLen, pH, "EQH $$$", style=label.style_label_down, color=color.new(color.fuchsia, 100), textcolor=color.fuchsia, size=size.tiny)
+if showEQ and eqLo
+    line.new(bar_index - swingLen, pL, bar_index, pL, color=color.aqua, style=line.style_dotted, extend=extend.right)
+    label.new(bar_index - swingLen, pL, "EQL $$$", style=label.style_label_up, color=color.new(color.aqua, 100), textcolor=color.aqua, size=size.tiny)
+
+// Premium / discount: big money sells in premium, buys in discount
+rangeHi = ta.highest(high, pdLen)
+rangeLo = ta.lowest(low, pdLen)
+eqMid = (rangeHi + rangeLo) / 2
+plot(showPD2 ? eqMid : na, "Equilibrium", color=color.new(color.gray, 30), style=plot.style_linebr)
+plot(showPD2 ? rangeHi : na, "Premium High", color=color.new(color.red, 80), style=plot.style_linebr)
+plot(showPD2 ? rangeLo : na, "Discount Low", color=color.new(color.green, 80), style=plot.style_linebr)
 
 // ----------------------------------------------------------- Dashboard ------
 dpos = switch dashPos
