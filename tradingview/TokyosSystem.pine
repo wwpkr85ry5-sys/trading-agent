@@ -1,0 +1,196 @@
+//@version=5
+indicator("Tokyo's System — Structure & Imbalance", overlay=true, max_lines_count=100, max_labels_count=100, max_boxes_count=20)
+
+swingLength = input.int(4, "Swing Confirmation Bars", minval=1, maxval=20)
+minimumGapAtr = input.float(0.1, "Minimum Imbalance (ATR)", minval=0.0, step=0.05)
+zoneForward = input.int(40, "Zone Extension (bars)", minval=5, maxval=200)
+rewardRisk = input.float(2.0, "Target Risk/Reward", minval=0.5, maxval=10.0, step=0.25)
+riskPercent = input.float(1.0, "Account Risk Guide (%)", minval=0.1, maxval=10.0, step=0.1)
+showDashboard = input.bool(true, "Show System Checklist")
+showSweeps = input.bool(true, "Show Liquidity Sweeps")
+showImbalances = input.bool(true, "Show Imbalance Zones")
+showDiscount = input.bool(true, "Show Demand in Discount")
+
+atr = ta.atr(14)
+pivotHigh = ta.pivothigh(high, swingLength, swingLength)
+pivotLow = ta.pivotlow(low, swingLength, swingLength)
+
+var float swingHigh = na
+var float swingLow = na
+var int swingHighBar = na
+var int swingLowBar = na
+var int direction = 0
+var int lastSweepDirection = 0
+
+if not na(pivotHigh)
+    swingHigh := pivotHigh
+    swingHighBar := bar_index - swingLength
+
+if not na(pivotLow)
+    swingLow := pivotLow
+    swingLowBar := bar_index - swingLength
+
+breakUp = not na(swingHigh) and close > swingHigh and close[1] <= swingHigh
+breakDown = not na(swingLow) and close < swingLow and close[1] >= swingLow
+
+if breakUp
+    direction := 1
+    line.new(swingHighBar, swingHigh, bar_index, swingHigh, xloc=xloc.bar_index, color=color.black, width=1)
+    label.new(bar_index, swingHigh, "break of structure up", style=label.style_none, textcolor=color.black, size=size.tiny)
+
+if breakDown
+    direction := -1
+    line.new(swingLowBar, swingLow, bar_index, swingLow, xloc=xloc.bar_index, color=color.black, width=1)
+    label.new(bar_index, swingLow, "break of structure down", style=label.style_none, textcolor=color.black, size=size.tiny)
+
+bullishSweep = not na(swingLow) and low < swingLow and close > swingLow
+bearishSweep = not na(swingHigh) and high > swingHigh and close < swingHigh
+
+if bullishSweep
+    lastSweepDirection := 1
+    if showSweeps
+        label.new(bar_index, low, "liquidity grab", style=label.style_label_up, color=color.new(color.green, 15), textcolor=color.white, size=size.tiny)
+
+if bearishSweep
+    lastSweepDirection := -1
+    if showSweeps
+        label.new(bar_index, high, "liquidity grab", style=label.style_label_down, color=color.new(color.red, 15), textcolor=color.white, size=size.tiny)
+
+rangeReady = not na(swingHigh) and not na(swingLow) and swingHigh > swingLow
+equilibrium = rangeReady ? (swingHigh + swingLow) / 2.0 : na
+inDiscount = rangeReady and close <= equilibrium
+inPremium = rangeReady and close >= equilibrium
+
+var box discountBox = na
+var label discountLabel = na
+if (not na(pivotHigh) or not na(pivotLow)) and rangeReady
+    if not na(discountBox)
+        box.delete(discountBox)
+    if not na(discountLabel)
+        label.delete(discountLabel)
+    if showDiscount
+        discountBox := box.new(left=swingLowBar, top=equilibrium, right=bar_index + zoneForward, bottom=swingLow, xloc=xloc.bar_index, bgcolor=color.new(color.lime, 86), border_color=color.new(color.lime, 100))
+        discountLabel := label.new(bar_index + 3, (equilibrium + swingLow) / 2.0, "demand in discount", style=label.style_none, textcolor=color.black, size=size.small)
+
+if not showDiscount and not na(discountBox)
+    box.delete(discountBox)
+    discountBox := na
+    if not na(discountLabel)
+        label.delete(discountLabel)
+        discountLabel := na
+
+var box bullishFvgBox = na
+var box bearishFvgBox = na
+var float bullishFvgTop = na
+var float bullishFvgBottom = na
+var float bearishFvgTop = na
+var float bearishFvgBottom = na
+var int bullishFvgBar = na
+var int bearishFvgBar = na
+var bool bullishFvgActive = false
+var bool bearishFvgActive = false
+
+bullishGap = bar_index >= 2 and low > high[2] and low - high[2] >= atr * minimumGapAtr
+bearishGap = bar_index >= 2 and high < low[2] and low[2] - high >= atr * minimumGapAtr
+
+if bullishGap
+    bullishFvgTop := low
+    bullishFvgBottom := high[2]
+    bullishFvgBar := bar_index
+    bullishFvgActive := true
+    if not na(bullishFvgBox)
+        box.delete(bullishFvgBox)
+    if showImbalances
+        bullishFvgBox := box.new(left=bar_index - 2, top=bullishFvgTop, right=bar_index + zoneForward, bottom=bullishFvgBottom, xloc=xloc.bar_index, bgcolor=color.new(color.yellow, 75), border_color=color.new(color.yellow, 100), text="imbalance", text_color=color.black, text_size=size.tiny)
+
+if bearishGap
+    bearishFvgTop := low[2]
+    bearishFvgBottom := high
+    bearishFvgBar := bar_index
+    bearishFvgActive := true
+    if not na(bearishFvgBox)
+        box.delete(bearishFvgBox)
+    if showImbalances
+        bearishFvgBox := box.new(left=bar_index - 2, top=bearishFvgTop, right=bar_index + zoneForward, bottom=bearishFvgBottom, xloc=xloc.bar_index, bgcolor=color.new(color.orange, 80), border_color=color.new(color.orange, 100), text="imbalance", text_color=color.black, text_size=size.tiny)
+
+if bullishFvgActive and not na(bullishFvgBottom) and low <= bullishFvgBottom
+    bullishFvgActive := false
+    if not na(bullishFvgBox)
+        box.set_right(bullishFvgBox, bar_index)
+
+if bearishFvgActive and not na(bearishFvgTop) and high >= bearishFvgTop
+    bearishFvgActive := false
+    if not na(bearishFvgBox)
+        box.set_right(bearishFvgBox, bar_index)
+
+if bullishFvgActive and not na(bullishFvgBox)
+    box.set_right(bullishFvgBox, bar_index + zoneForward)
+if bearishFvgActive and not na(bearishFvgBox)
+    box.set_right(bearishFvgBox, bar_index + zoneForward)
+
+if not showImbalances
+    if not na(bullishFvgBox)
+        box.delete(bullishFvgBox)
+        bullishFvgBox := na
+    if not na(bearishFvgBox)
+        box.delete(bearishFvgBox)
+        bearishFvgBox := na
+
+bullishRetest = bullishFvgActive and not na(bullishFvgBar) and bar_index > bullishFvgBar and low <= bullishFvgTop and close > bullishFvgBottom
+bearishRetest = bearishFvgActive and not na(bearishFvgBar) and bar_index > bearishFvgBar and high >= bearishFvgBottom and close < bearishFvgTop
+longSetup = barstate.isconfirmed and direction == 1 and inDiscount and bullishRetest and close > open and not na(swingLow) and close > swingLow
+shortSetup = barstate.isconfirmed and direction == -1 and inPremium and bearishRetest and close < open and not na(swingHigh) and close < swingHigh
+longExecution = longSetup and not longSetup[1]
+shortExecution = shortSetup and not shortSetup[1]
+
+var line entryLine = na
+var line stopLine = na
+var line targetLine = na
+if longExecution
+    stopPrice = swingLow
+    targetPrice = close + (close - stopPrice) * rewardRisk
+    if not na(entryLine)
+        line.delete(entryLine)
+        line.delete(stopLine)
+        line.delete(targetLine)
+    entryLine := line.new(bar_index, close, bar_index + zoneForward, close, xloc=xloc.bar_index, color=color.blue, width=2)
+    stopLine := line.new(bar_index, stopPrice, bar_index + zoneForward, stopPrice, xloc=xloc.bar_index, color=color.red, style=line.style_dashed)
+    targetLine := line.new(bar_index, targetPrice, bar_index + zoneForward, targetPrice, xloc=xloc.bar_index, color=color.green, style=line.style_dashed)
+
+if shortExecution
+    stopPrice = swingHigh
+    targetPrice = close - (stopPrice - close) * rewardRisk
+    if not na(entryLine)
+        line.delete(entryLine)
+        line.delete(stopLine)
+        line.delete(targetLine)
+    entryLine := line.new(bar_index, close, bar_index + zoneForward, close, xloc=xloc.bar_index, color=color.blue, width=2)
+    stopLine := line.new(bar_index, stopPrice, bar_index + zoneForward, stopPrice, xloc=xloc.bar_index, color=color.red, style=line.style_dashed)
+    targetLine := line.new(bar_index, targetPrice, bar_index + zoneForward, targetPrice, xloc=xloc.bar_index, color=color.green, style=line.style_dashed)
+
+plotshape(longExecution, title="Bullish Execution", style=shape.labelup, location=location.belowbar, color=color.green, text="BUY", textcolor=color.white, size=size.tiny)
+plotshape(shortExecution, title="Bearish Execution", style=shape.labeldown, location=location.abovebar, color=color.red, text="SELL", textcolor=color.white, size=size.tiny)
+
+var table checklist = table.new(position.top_left, 2, 5, frame_color=color.gray, frame_width=1, border_color=color.new(color.gray, 70))
+if showDashboard and barstate.islast
+    directionText = direction == 1 ? "Bullish" : direction == -1 ? "Bearish" : "Waiting for break"
+    directionColor = direction == 1 ? color.new(color.green, 15) : direction == -1 ? color.new(color.red, 15) : color.new(color.gray, 30)
+    confirmationText = lastSweepDirection == direction and direction != 0 ? "Liquidity sweep ✓" : "Waiting for sweep"
+    confirmationColor = lastSweepDirection == direction and direction != 0 ? color.new(color.green, 20) : color.new(color.gray, 30)
+    executionText = longSetup ? "Long setup" : shortSetup ? "Short setup" : "Waiting for retest"
+    executionColor = longSetup or shortSetup ? color.new(color.green, 20) : color.new(color.gray, 30)
+    table.cell(checklist, 0, 0, "TOKYO'S SYSTEM", text_color=color.white, bgcolor=color.black)
+    table.cell(checklist, 1, 0, "STATUS", text_color=color.white, bgcolor=color.black)
+    table.cell(checklist, 0, 1, "Direction", text_color=color.black)
+    table.cell(checklist, 1, 1, directionText, text_color=color.white, bgcolor=directionColor)
+    table.cell(checklist, 0, 2, "Confirmation", text_color=color.black)
+    table.cell(checklist, 1, 2, confirmationText, text_color=color.white, bgcolor=confirmationColor)
+    table.cell(checklist, 0, 3, "Execution", text_color=color.black)
+    table.cell(checklist, 1, 3, executionText, text_color=color.white, bgcolor=executionColor)
+    table.cell(checklist, 0, 4, "Money management", text_color=color.black)
+    table.cell(checklist, 1, 4, str.tostring(riskPercent, "#.##") + "% risk | 1:" + str.tostring(rewardRisk, "#.##"), text_color=color.black, bgcolor=color.new(color.blue, 80))
+
+alertcondition(longExecution, title="Tokyo System Long", message="Tokyo's System: bullish execution setup")
+alertcondition(shortExecution, title="Tokyo System Short", message="Tokyo's System: bearish execution setup")
+alertcondition(bullishSweep, title="Bullish Liquidity Grab", message="Tokyo's System: price swept below a swing low and reclaimed it")
+alertcondition(bearishSweep, title="Bearish Liquidity Grab", message="Tokyo's System: price swept above a swing high and rejected it")
