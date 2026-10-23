@@ -1,0 +1,187 @@
+{
+  "name": "Tokyo's System",
+  "version": 1,
+  "format": "declarative-trading-indicator-spec",
+  "platform": "TradingView",
+  "runtime_note": "This JSON describes indicator behavior and visuals; TradingView does not execute JSON indicators. Implement the specification in Pine Script or a compatible runtime.",
+  "overlay": true,
+  "inputs": {
+    "swing_confirmation_bars": {
+      "type": "integer",
+      "default": 4,
+      "min": 1,
+      "max": 20
+    },
+    "minimum_imbalance_atr": {
+      "type": "number",
+      "default": 0.1,
+      "min": 0,
+      "step": 0.05
+    },
+    "zone_extension_bars": {
+      "type": "integer",
+      "default": 40,
+      "min": 5,
+      "max": 200
+    },
+    "risk_reward": {
+      "type": "number",
+      "default": 2,
+      "min": 0.5,
+      "max": 10,
+      "step": 0.25
+    },
+    "account_risk_percent_guide": {
+      "type": "number",
+      "default": 1,
+      "min": 0.1,
+      "max": 10,
+      "step": 0.1,
+      "description": "Display-only guide; does not calculate position size."
+    },
+    "show_checklist": {
+      "type": "boolean",
+      "default": true
+    },
+    "show_liquidity_sweeps": {
+      "type": "boolean",
+      "default": true
+    },
+    "show_imbalance_zones": {
+      "type": "boolean",
+      "default": true
+    },
+    "show_discount_demand": {
+      "type": "boolean",
+      "default": true
+    }
+  },
+  "calculations": {
+    "atr": {
+      "method": "average_true_range",
+      "length": 14
+    },
+    "swing_high": {
+      "method": "confirmed_pivot_high",
+      "left_bars": "swing_confirmation_bars",
+      "right_bars": "swing_confirmation_bars"
+    },
+    "swing_low": {
+      "method": "confirmed_pivot_low",
+      "left_bars": "swing_confirmation_bars",
+      "right_bars": "swing_confirmation_bars"
+    },
+    "equilibrium": "(latest_swing_high + latest_swing_low) / 2",
+    "discount_range": {
+      "lower": "latest_swing_low",
+      "upper": "equilibrium"
+    },
+    "premium_range": {
+      "lower": "equilibrium",
+      "upper": "latest_swing_high"
+    },
+    "bullish_imbalance": "current_low > high_two_bars_ago AND current_low - high_two_bars_ago >= ATR * minimum_imbalance_atr",
+    "bearish_imbalance": "current_high < low_two_bars_ago AND low_two_bars_ago - current_high >= ATR * minimum_imbalance_atr"
+  },
+  "market_structure": {
+    "bullish_break": "confirmed_close_crosses_above_latest_swing_high",
+    "bearish_break": "confirmed_close_crosses_below_latest_swing_low",
+    "labels": {
+      "bullish": "break of structure up",
+      "bearish": "break of structure down"
+    },
+    "line_style": {
+      "color": "#111111",
+      "width": 1,
+      "pattern": "solid"
+    }
+  },
+  "confirmation": {
+    "bullish_liquidity_grab": "current_low < latest_swing_low AND current_close > latest_swing_low",
+    "bearish_liquidity_grab": "current_high > latest_swing_high AND current_close < latest_swing_high",
+    "label": "liquidity grab",
+    "bullish_color": "#2E9D63",
+    "bearish_color": "#D9534F"
+  },
+  "zones": {
+    "bullish_imbalance": {
+      "top": "current_low",
+      "bottom": "high_two_bars_ago",
+      "color": "#FFF4B2",
+      "label": "imbalance",
+      "extend_until": "zone_extension_bars_or_full_fill"
+    },
+    "bearish_imbalance": {
+      "top": "low_two_bars_ago",
+      "bottom": "current_high",
+      "color": "#FFE5B4",
+      "label": "imbalance",
+      "extend_until": "zone_extension_bars_or_full_fill"
+    },
+    "demand_in_discount": {
+      "top": "equilibrium",
+      "bottom": "latest_swing_low",
+      "color": "#CFF4D2",
+      "label": "demand in discount",
+      "visible_when": "show_discount_demand AND latest_swing_high > latest_swing_low"
+    }
+  },
+  "setups": {
+    "long": {
+      "direction": "latest_market_structure_break_is_bullish",
+      "confirmation": "bullish_liquidity_grab",
+      "execution": "confirmed_bullish_candle_retests_active_bullish_imbalance_while_close_is_in_discount",
+      "stop": "latest_swing_low",
+      "target": "entry + (entry - stop) * risk_reward"
+    },
+    "short": {
+      "direction": "latest_market_structure_break_is_bearish",
+      "confirmation": "bearish_liquidity_grab",
+      "execution": "confirmed_bearish_candle_retests_active_bearish_imbalance_while_close_is_in_premium",
+      "stop": "latest_swing_high",
+      "target": "entry - (stop - entry) * risk_reward"
+    }
+  },
+  "checklist": {
+    "position": "top_left",
+    "title": "TOKYO'S SYSTEM",
+    "rows": [
+      {
+        "name": "DIRECTION",
+        "value": "latest_market_structure_break"
+      },
+      {
+        "name": "CONFIRMATION",
+        "value": "liquidity_grab_in_direction"
+      },
+      {
+        "name": "EXECUTION",
+        "value": "confirmed_imbalance_retest_in_discount_or_premium"
+      },
+      {
+        "name": "MONEY MANAGEMENT",
+        "value": "account_risk_percent_guide_and_risk_reward"
+      }
+    ]
+  },
+  "signals": [
+    {
+      "name": "Tokyo System Long",
+      "condition": "long_setup",
+      "marker": "BUY"
+    },
+    {
+      "name": "Tokyo System Short",
+      "condition": "short_setup",
+      "marker": "SELL"
+    },
+    {
+      "name": "Bullish Liquidity Grab",
+      "condition": "bullish_liquidity_grab"
+    },
+    {
+      "name": "Bearish Liquidity Grab",
+      "condition": "bearish_liquidity_grab"
+    }
+  ]
+}
